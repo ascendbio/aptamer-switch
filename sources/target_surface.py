@@ -41,6 +41,7 @@ tail through the structure and into the patch statistics.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -59,11 +60,13 @@ PATCH_RADIUS = 12.0
 BURIAL_RADIUS = 10.0
 BURIED_NEIGHBOURS = 18.0
 
-FOLD_PY = Path.home() / "Documents" / "AscendBiosci" / "esm-sandbox" / "venv" / "bin" / "python"
-FOLD_CLI = (Path.home() / "Documents" / "AscendBiosci" / "target-feasibility"
-            / "sources" / "fold_cli.py")
-
-HACKATHON = Path.home() / "Documents" / "AscendBiosci" / "hackathon-mcp"
+# Sibling projects, overridable by environment so this is not tied to one
+# machine's directory layout. ESM_PY needs the esm SDK; ORTHOLOG_DIR holds the
+# UniProt helpers.
+_BASE = Path(os.environ.get("ASCEND_ROOT", Path.home() / "Documents" / "AscendBiosci"))
+FOLD_PY = Path(os.environ.get("ESM_PY", _BASE / "esm-sandbox" / "venv" / "bin" / "python"))
+FOLD_CLI = Path(os.environ.get("FOLD_CLI", _BASE / "target-feasibility" / "sources" / "fold_cli.py"))
+HACKATHON = Path(os.environ.get("ORTHOLOG_DIR", _BASE / "hackathon-mcp"))
 
 
 def _sequence(gene: str) -> tuple[str, str, int]:
@@ -75,8 +78,7 @@ def _sequence(gene: str) -> tuple[str, str, int]:
     if not rec:
         raise LookupError(f"no human UniProt entry for {gene}")
 
-    sys.path.insert(0, str(Path.home() / "Documents" / "AscendBiosci"
-                          / "target-feasibility" / "sources"))
+    sys.path.insert(0, str(FOLD_CLI.parent))
     import accessibility
 
     seq = rec["sequence"]

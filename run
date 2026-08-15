@@ -1,5 +1,27 @@
 #!/bin/bash
-# Pin the venv that has ViennaRNA, gradio and the Agent SDK.
-VENV="$HOME/Documents/AscendBiosci/hackathon-mcp/venv/bin/python"
+# Launch the app (no args) or the agent CLI (with a biomarker).
+#
+# Needs a Python 3.12 environment with ViennaRNA, gradio and claude-agent-sdk.
+# Set APTAMER_PY to point at it; otherwise a few usual locations are tried, so a
+# teammate with a different layout does not have to edit this file.
+set -e
 cd "$(dirname "$0")"
+
+CANDIDATES=(
+  "$APTAMER_PY"
+  "$HOME/Documents/AscendBiosci/hackathon-mcp/venv/bin/python"
+  "./venv/bin/python"
+  "$(command -v python3.12 || true)"
+)
+for py in "${CANDIDATES[@]}"; do
+  [ -n "$py" ] && [ -x "$py" ] && "$py" -c "import RNA, gradio" 2>/dev/null && VENV="$py" && break
+done
+
+if [ -z "${VENV:-}" ]; then
+  echo "No suitable Python found. Create one:" >&2
+  echo "  python3.12 -m venv venv && ./venv/bin/pip install -r requirements.txt" >&2
+  echo "Or set APTAMER_PY to an interpreter that has ViennaRNA and gradio." >&2
+  exit 1
+fi
+
 if [ -z "$1" ]; then exec "$VENV" app.py; else exec "$VENV" agent.py "$@"; fi

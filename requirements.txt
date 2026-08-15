@@ -1,0 +1,9 @@
+# Python 3.12. ViennaRNA has no wheel for 3.13 on some platforms.
+ViennaRNA==2.7.2
+gradio>=6.0
+claude-agent-sdk>=0.2
+matplotlib>=3.8
+numpy>=1.26
+biopython>=1.83
+requests>=2.31
+anyio>=4.0
