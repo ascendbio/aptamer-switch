@@ -22,6 +22,7 @@ import gradio as gr
 from agent import analyse
 
 sys.path.insert(0, str(Path(__file__).parent / "sources"))
+import store  # noqa: E402
 
 OUT = Path(__file__).parent / "out"
 OUT.mkdir(exist_ok=True)
@@ -95,7 +96,21 @@ async def respond(target: str, history: list):
         yield history, "", *BLANK
         return
 
+    # Persist the memo and trace. design_plate already archived the numbers, but
+    # the agent's written reasoning lived only in this browser tab until now —
+    # and the reasoning is the part that explains why the numbers were accepted.
+    await asyncio.to_thread(_archive, target, memo, trace)
     yield history, "", *await asyncio.to_thread(_figures, target)
+
+
+def _archive(target: str, memo: str, trace: list[str]) -> None:
+    """Write the memo into this target's run directory, or a new one if the
+    design tool never got far enough to create one."""
+    try:
+        run_dir = store.latest(OUT, target) or store.new_run(OUT, target)
+        store.save_memo(run_dir, target, memo, trace)
+    except Exception:
+        pass          # a failed archive must never lose the user their answer
 
 
 with gr.Blocks(title="Aptamer switch design") as demo:
