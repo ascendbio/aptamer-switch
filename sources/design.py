@@ -41,9 +41,9 @@ CLINICAL_PG = [
 ]
 
 
-def _tile(rows: list[dict], n: int) -> list[dict]:
+def _tile(rows: list[dict], n: int, window: tuple[float, float] = WINDOW) -> list[dict]:
     """Spread `n` picks evenly across the switching window, best-ranked first."""
-    lo, hi = WINDOW
+    lo, hi = window
     width = (hi - lo) / N_BINS
     per_bin = max(n // N_BINS, 1)
 
@@ -71,14 +71,27 @@ def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float,
     """Design the plate and return everything needed to justify it."""
     clinical_M = thermo.pg_per_ml_to_molar(clinical_pg_per_ml, mw_da)
 
-    lib = generate.library(parent, core)
-    in_window = [v for v in lib if WINDOW[0] <= v.dd_g <= WINDOW[1]]
+    # Pick the architecture the parent can actually support. A Watson-Crick
+    # parent is destabilised in itself; only a quadruplex, whose opening energy
+    # ViennaRNA cannot price, needs a competing tail set against it. Using the
+    # tail everywhere was what lost TNF-alpha its entire library: a sequence
+    # complementary to the core is a sequence that binds the neighbour's core.
+    probe = thermo.fold(parent, core)
+    if probe.trustworthy:
+        architecture = "intrinsic"
+        lib = generate.intrinsic_library(parent, core)
+        window = generate.INTRINSIC_WINDOW
+    else:
+        architecture = "competing-tail"
+        lib = generate.library(parent, core)
+        window = WINDOW
+    in_window = [v for v in lib if window[0] <= v.dd_g <= window[1]]
     rows = score.assess_all(in_window, parent, core, kd_intrinsic_M, clinical_M)
     passing = [r for r in rows if r["passes"]]
 
     ctrls = plate.controls(parent, lib)
     n_test = 96 - len(ctrls)
-    selected = _tile(passing, n_test)
+    selected = _tile(passing, n_test, window)
 
     positions = [f"{r}{c}" for r in plate.ROWS for c in plate.COLS]
     rng = random.Random(SEED)
@@ -109,6 +122,8 @@ def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float,
 
     return {
         "target": target,
+        "architecture": architecture,
+        "design_window": list(window),
         "parent": parent,
         "core": list(core),
         "kd_intrinsic_nM": kd_intrinsic_M * 1e9,

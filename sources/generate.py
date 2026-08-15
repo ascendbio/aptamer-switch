@@ -190,3 +190,90 @@ if __name__ == "__main__":
         lens = sorted({len(v.tail) for v in band})
         print(f"  ddG {lo:+.0f} to {lo + 1:+.0f}  {len(band):4d} variants  "
               f"tail lengths {lens}")
+
+
+# --------------------------------------------------- intrinsic destabilisation
+
+"""A second architecture, for parents that do not need a tail.
+
+The competing tail exists because a G-quadruplex cannot be priced directly:
+ViennaRNA ignores hard constraints inside one, so the only computable lever is a
+Watson-Crick duplex set against it. A parent that folds by ordinary base pairing
+has no such problem — dG_open is exact for it — and the tail becomes not merely
+unnecessary but harmful, since a sequence complementary to the core is by
+construction a sequence that binds the neighbouring construct's core.
+
+That is what killed TNF-alpha: 21,862 candidates, every one flagged as
+dimerising, all of them for a feature the architecture forced on them.
+
+Here the aptamer is destabilised in itself instead. Shorten a terminal stem, or
+break a pair inside it, until the fold sits close enough to open that binding can
+finish the job. No added sequence, so no tail to cross-hybridise, and the design
+variable is dG_open directly rather than a difference of two energies.
+"""
+
+# The useful band for dG_open, in kcal/mol. Below this the core is already open
+# and there is nothing to switch; above it the target cannot pay the opening
+# cost, and every kcal/mol multiplies apparent Kd by about five.
+INTRINSIC_WINDOW = (0.3, 3.0)
+
+
+def intrinsic_library(parent: str, core: tuple[int, int]) -> list[Variant]:
+    """Truncation and point-mutation variants of the parent itself.
+
+    Both levers are confined to sequence outside the binding core. Trimming into
+    the core, or mutating a residue the target contacts, does not produce a
+    weaker switch — it produces a molecule that no longer binds, which the
+    thermodynamics will happily score as an excellent switch because dG_open of
+    a core that was deleted is zero.
+    """
+    parent = parent.upper().replace("U", "T")
+    core_lo, core_hi = core
+    max_left = core_lo - 1                    # 5' residues free to remove
+    max_right = len(parent) - core_hi         # 3' residues free to remove
+
+    seen: set[str] = set()
+    out: list[Variant] = []
+
+    def add(seq: str, left: int, family: str, n_mm: int) -> None:
+        if seq in seen or len(seq) < 12 or not _homopolymer_ok(seq):
+            return
+        seen.add(seq)
+        lo, hi = core_lo - left, core_hi - left
+        if not 1 <= lo < hi <= len(seq):
+            return
+        f = thermo.fold(seq, (lo, hi))
+        if not f.trustworthy:
+            return
+        out.append(Variant(
+            name="", sequence=seq, family=family, register=(lo, hi),
+            tail="", linker=0, n_mismatch=n_mm,
+            dg_duplex=0.0, dg_fold=f.mfe, dd_g=round(f.dg_open, 2),
+            trustworthy=True,
+            notes=[f"architecture=intrinsic, dG_open {f.dg_open}"]))
+
+    # Mutable positions are those outside the core, 0-based.
+    free = [i for i in range(len(parent)) if not (core_lo - 1 <= i <= core_hi - 1)]
+
+    for left in range(max_left + 1):
+        for right in range(max_right + 1):
+            trimmed = parent[left:len(parent) - right] if right else parent[left:]
+            add(trimmed, left, "truncation", 0)
+
+            # Point mutations on top of each truncation. Truncation is the coarse
+            # lever and mutation the fine one; combining them reaches energies
+            # neither gets to alone, which matters because the usable band is
+            # narrow and a single lever lands in it only by luck.
+            for i in free:
+                j = i - left
+                if not 0 <= j < len(trimmed):
+                    continue
+                for sub in "ACGT":
+                    if sub == trimmed[j]:
+                        continue
+                    add(trimmed[:j] + sub + trimmed[j + 1:], left,
+                        "truncation+mismatch" if (left or right) else "mismatch", 1)
+
+    for i, v in enumerate(sorted(out, key=lambda x: x.dd_g), 1):
+        v.name = f"IN{i:04d}"
+    return sorted(out, key=lambda x: x.dd_g)

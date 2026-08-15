@@ -87,7 +87,7 @@ class Assessment:
     kd_apparent_nM: float
     occupancy_at_clinical: float
     # specificity
-    specificity_margin: float
+    specificity_margin: float | None
     self_dimer_dg: float
     dimer_margin: float
     max_g_run: int
@@ -140,20 +140,26 @@ def assess(sequence: str, parent: str, tail: str, window: str, dd_g: float,
     folded = thermo.fold(seq, core)
     kd_app = folded.kd_apparent(kd_intrinsic_M)
 
-    margin = specificity_margin(parent, tail, window)
+    # No tail means no off-target tail site to check. The criterion is not
+    # "passed" so much as absent, and scoring it as a pass at some arbitrary
+    # value would let it silently rank intrinsic designs above tail ones.
+    margin = specificity_margin(parent, tail, window) if tail else float("nan")
     dimer = _self_dimer(seq)
     # Positive means the intramolecular fold wins, which is what we want.
     dimer_margin = round((dimer + INTERMOLECULAR_INIT) - folded.mfe, 2)
-    g_run = _max_run(tail, "G")            # designed region only
+    # For an intrinsic design the whole molecule is the designed region: there
+    # is no tail, and the mutations sit in the parent itself.
+    designed = tail if tail else seq
+    g_run = _max_run(designed, "G")
     parent_g_run = _max_run(parent, "G")
     g_frac = seq.count("G") / len(seq)
     gc = 100.0 * (seq.count("G") + seq.count("C")) / len(seq)
-    homo = _max_run(tail)                  # designed region only
+    homo = _max_run(designed)
 
     # Each flag carries a stable category alongside its detail, so failures can
     # be counted and charted without parsing numbers back out of prose.
     checks = [
-        (margin < SPECIFICITY_MARGIN, "off-target tail site",
+        (tail != "" and margin < SPECIFICITY_MARGIN, "off-target tail site",
          f"tail binds a second site (margin {margin} kcal/mol)"),
         (dimer_margin < DIMER_MARGIN_LIMIT, "dimerises",
          f"dimer beats its own fold by {-dimer_margin:.1f} kcal/mol"),
@@ -171,13 +177,19 @@ def assess(sequence: str, parent: str, tail: str, window: str, dd_g: float,
     # towards specificity. Deliberately not a weighted sum over all criteria:
     # the criteria that matter are already hard filters, and folding them into a
     # score would let a good ddG buy its way past a dimerising design.
-    rank_score = round(-abs(dd_g) + 0.25 * min(margin, 4.0), 3)
+    # Tail designs rank on how close the competition sits to balance; intrinsic
+    # designs rank on how close dG_open sits to the middle of its usable band.
+    # The two are different quantities and must not be compared to each other.
+    if tail:
+        rank_score = round(-abs(dd_g) + 0.25 * min(margin, 4.0), 3)
+    else:
+        rank_score = round(-abs(dd_g - 1.5), 3)
 
     return Assessment(
         dd_g=dd_g,
         kd_apparent_nM=round(kd_app * 1e9, 2),
         occupancy_at_clinical=round(thermo.occupancy(clinical_M, kd_app), 4),
-        specificity_margin=margin,
+        specificity_margin=None if tail == "" else margin,
         self_dimer_dg=dimer,
         dimer_margin=dimer_margin,
         max_g_run=g_run,
