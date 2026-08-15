@@ -264,10 +264,17 @@ def _summarise(payload: str) -> str:
         if not d.get("wells"):
             blockers = ", ".join(d.get("universal_blockers", [])) or "no candidate passed"
             return f"{d['library_size']:,} candidates, 0 usable — {blockers}"
-        lo, hi = d["kd_apparent_nM_range"]
-        return (f"{d['library_size']:,} → {d['in_switching_window']:,} in window → "
-                f"{d['passing_all_criteria']:,} pass → {d['test_wells']} wells · "
-                f"Kd_app {lo:.0f}-{hi:.0f} nM")
+        line = (f"{d['library_size']:,} → {d['in_switching_window']:,} in window → "
+                f"{d['passing_all_criteria']:,} pass → {d['test_wells']} wells")
+        # Kd is absent whenever no paper reports one for this exact sequence,
+        # which is the usual case. The summary says so rather than unpacking a
+        # range that is not there.
+        rng = d.get("kd_apparent_nM_range")
+        if rng:
+            line += f" · Kd_app {rng[0]:.0f}-{rng[1]:.0f} nM"
+        else:
+            line += " · no published Kd, affinity output omitted"
+        return line
     return ""
 
 
