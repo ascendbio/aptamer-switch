@@ -48,6 +48,38 @@ def new_run(out_dir: Path, target: str) -> Path:
     return path
 
 
+def _thresholds() -> dict:
+    """The judgement calls that shaped this plate, recorded with it.
+
+    None of these is measured. They are choices, and different choices give
+    different plates — the dimer limit alone moves the pass count from 182 to
+    1,025. A run that does not record them cannot be reproduced or argued with,
+    so they travel in the manifest rather than living only in the source.
+    """
+    import generate
+    import score
+    return {
+        "_note": "chosen values, not measurements; see module docstrings",
+        "switching_window_tail": list(design_window("tail")),
+        "switching_window_intrinsic": list(generate.INTRINSIC_WINDOW),
+        "specificity_margin_min": score.SPECIFICITY_MARGIN,
+        "dimer_margin_min": score.DIMER_MARGIN_LIMIT,
+        "intermolecular_init": score.INTERMOLECULAR_INIT,
+        "max_g_run_in_designed_region": score.MAX_G_RUN,
+        "max_homopolymer": score.MAX_HOMOPOLYMER,
+        "gc_percent_band": [25.0, 75.0],
+        "well_assignment_seed": SEED_FOR_MANIFEST,
+    }
+
+
+def design_window(kind: str) -> tuple[float, float]:
+    import design
+    return design.WINDOW if kind == "tail" else __import__("generate").INTRINSIC_WINDOW
+
+
+SEED_FOR_MANIFEST = 20260815
+
+
 def save_design(run_dir: Path, result: dict) -> dict:
     """Manifest plus the complete scored library, not merely the survivors."""
     picked = result.get("picked_names", set())
@@ -65,6 +97,8 @@ def save_design(run_dir: Path, result: dict) -> dict:
         "universal_blockers": result.get("universal_blockers", []),
         "diagnosis": result.get("diagnosis", ""),
         "position_check": result["position_check"],
+        "architecture": result.get("architecture"),
+        "thresholds": _thresholds(),
         "code_commit": _git_commit(),
         "written_at": datetime.now().isoformat(timespec="seconds"),
         # The core is an assumption unless a paper mapped the epitope. Recording
