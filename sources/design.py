@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import generate  # noqa: E402
 import plate  # noqa: E402
 import score  # noqa: E402
+import store  # noqa: E402
 import thermo  # noqa: E402
 
 WINDOW = (-2.0, 2.0)
@@ -172,12 +173,20 @@ def _position_check(tests: list[plate.Well]) -> tuple[float, float]:
 
 
 def artifacts(result: dict, out_dir: Path) -> dict:
-    """Render the four figures and the order file."""
+    """Render the four figures and the order file, and archive the run.
+
+    Figures keep their flat `<target>_<name>.png` paths because the UI reads
+    those, but every run is also copied into its own timestamped directory. The
+    flat files are a view of the newest run; the run directory is the record.
+    """
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     import plots
 
     out_dir.mkdir(exist_ok=True)
     t = result["target"].replace("/", "_")
+    run_dir = store.new_run(out_dir, result["target"])
+    store.save_design(run_dir, result)
+    result["run_dir"] = str(run_dir)
 
     stages = [
         ("library", result["library_size"], "every tail length, register, mismatch and linker"),
@@ -203,6 +212,14 @@ def artifacts(result: dict, out_dir: Path) -> dict:
             result["wells"], str(out_dir / f"{t}_plate.png"),
             null_p95=pc["null_p95"], observed=pc["observed"])
         out["csv"] = str(plate.write_order(result["wells"], out_dir / f"{t}_plate.csv"))
+    # Copy the run's outputs alongside its manifest so the directory is
+    # self-contained: a plate is a lab record and should not depend on files
+    # that the next run will overwrite.
+    import shutil
+    for key, src in list(out.items()):
+        if src and Path(src).exists():
+            shutil.copy2(src, run_dir / Path(src).name)
+    out["run_dir"] = str(run_dir)
     return out
 
 

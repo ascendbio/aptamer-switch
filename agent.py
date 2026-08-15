@@ -163,6 +163,7 @@ async def design_plate(args: dict) -> dict:
             "universal_blockers": result["universal_blockers"],
             "diagnosis": result["diagnosis"],
             "figures": {k: v for k, v in art.items()},
+            "run_dir": art.get("run_dir"),
             "advice": "Do not retry with a different core - the blocker is a "
                       "property of the parent sequence. Report it and recommend "
                       "a different parent or architecture.",
@@ -184,6 +185,7 @@ async def design_plate(args: dict) -> dict:
                                  max(result["kd_apparent_nM"])],
         "position_check": result["position_check"],
         "order_file": art["csv"],
+        "run_dir": art.get("run_dir"),
         "top_candidates": top,
     })
 
