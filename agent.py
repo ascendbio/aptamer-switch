@@ -138,9 +138,13 @@ async def assess_parent(args: dict) -> dict:
     "manufacturability, rank them, tile the survivors across the switching "
     "window, randomise well positions against the design variable, and export a "
     "vendor-ready order file plus four figures. Takes about 30 seconds. Pass the "
-    "parent's reported Kd in nM (from find_parents) so apparent Kd and clinical "
-    "reach are computed from real data rather than a guess.",
-    {"target": str, "sequence": str, "core": str, "kd_nM": float},
+    "parent's reported Kd in nM ONLY if a paper reports it for this exact "
+    "sequence and this exact target, together with kd_source naming that paper. "
+    "Leave kd_nM empty otherwise: affinity-derived output is then omitted rather "
+    "than invented. Do not borrow a Kd from a related aptamer - a receptor "
+    "binder's Kd is not the ligand binder's.",
+    {"target": str, "sequence": str, "core": str, "kd_nM": float,
+     "kd_source": str},
 )
 async def design_plate(args: dict) -> dict:
     seq = args["sequence"].strip().upper()
@@ -149,8 +153,14 @@ async def design_plate(args: dict) -> dict:
     except (ValueError, TypeError):
         start, end = 1, max(4, len(seq) // 2)
 
-    kd_nM = float(args.get("kd_nM") or 10.0)
-    result = design.run(seq, (start, end), kd_nM * 1e-9, target=args["target"])
+    # A missing Kd is a normal, common state and must stay missing. Defaulting
+    # it to a plausible number silently manufactures affinity claims for a
+    # parent that has none.
+    raw_kd = args.get("kd_nM")
+    kd_M = float(raw_kd) * 1e-9 if raw_kd else None
+    result = design.run(seq, (start, end), kd_M, target=args["target"],
+                        kd_source=args.get("kd_source", "") or
+                        ("reported for this exact sequence" if kd_M else ""))
     art = design.artifacts(result, OUT)
 
     if not result["selected"]:
@@ -180,9 +190,12 @@ async def design_plate(args: dict) -> dict:
         "wells": 96,
         "test_wells": result["selected"],
         "failure_reasons": result["failure_reasons"],
-        "kd_intrinsic_nM": round(result["kd_intrinsic_nM"], 2),
-        "kd_apparent_nM_range": [min(result["kd_apparent_nM"]),
-                                 max(result["kd_apparent_nM"])],
+        "kd_intrinsic_nM": (round(result["kd_intrinsic_nM"], 2)
+                            if result["kd_intrinsic_nM"] else None),
+        "kd_source": result["kd_source"],
+        "kd_apparent_nM_range": ([min(result["kd_apparent_nM"]),
+                                  max(result["kd_apparent_nM"])]
+                                 if result["kd_apparent_nM"] else None),
         "position_check": result["position_check"],
         "order_file": art["csv"],
         "run_dir": art.get("run_dir"),

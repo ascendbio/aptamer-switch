@@ -84,8 +84,8 @@ MAX_HOMOPOLYMER = 4
 class Assessment:
     # switching
     dd_g: float
-    kd_apparent_nM: float
-    occupancy_at_clinical: float
+    kd_apparent_nM: float | None
+    occupancy_at_clinical: float | None
     # specificity
     specificity_margin: float | None
     self_dimer_dg: float
@@ -133,12 +133,12 @@ def specificity_margin(parent: str, tail: str, window: str) -> float:
 
 
 def assess(sequence: str, parent: str, tail: str, window: str, dd_g: float,
-           kd_intrinsic_M: float, clinical_M: float,
+           kd_intrinsic_M: float | None, clinical_M: float,
            core: tuple[int, int]) -> Assessment:
     """Score one candidate on every criterion, then decide whether it qualifies."""
     seq = sequence.upper()
     folded = thermo.fold(seq, core)
-    kd_app = folded.kd_apparent(kd_intrinsic_M)
+    kd_app = folded.kd_apparent(kd_intrinsic_M) if kd_intrinsic_M else None
 
     # No tail means no off-target tail site to check. The criterion is not
     # "passed" so much as absent, and scoring it as a pass at some arbitrary
@@ -187,8 +187,9 @@ def assess(sequence: str, parent: str, tail: str, window: str, dd_g: float,
 
     return Assessment(
         dd_g=dd_g,
-        kd_apparent_nM=round(kd_app * 1e9, 2),
-        occupancy_at_clinical=round(thermo.occupancy(clinical_M, kd_app), 4),
+        kd_apparent_nM=None if kd_app is None else round(kd_app * 1e9, 2),
+        occupancy_at_clinical=(None if kd_app is None
+                               else round(thermo.occupancy(clinical_M, kd_app), 4)),
         specificity_margin=None if tail == "" else margin,
         self_dimer_dg=dimer,
         dimer_margin=dimer_margin,

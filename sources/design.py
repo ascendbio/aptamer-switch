@@ -65,11 +65,25 @@ def _tile(rows: list[dict], n: int, window: tuple[float, float] = WINDOW) -> lis
     return picked[:n]
 
 
-def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float,
+def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float | None,
         target: str = "IL-6", mw_da: float = DEFAULT_MW,
-        clinical_pg_per_ml: float = 5000.0) -> dict:
-    """Design the plate and return everything needed to justify it."""
+        clinical_pg_per_ml: float = 5000.0, kd_source: str = "") -> dict:
+    """Design the plate and return everything needed to justify it.
+
+    `kd_intrinsic_M` may be None, and often should be. Most published aptamers
+    carry no measured affinity, and the honest output then omits every
+    affinity-derived number rather than substituting a plausible one. A borrowed
+    Kd propagates silently: an 8.5 nM value taken from an anti-IL-6-receptor
+    aptamer produced a full column of apparent-Kd figures for an anti-IL-6
+    design, all of them wrong and none of them marked as such.
+
+    `kd_source` records where the number came from, so a reader can judge it.
+    """
     clinical_M = thermo.pg_per_ml_to_molar(clinical_pg_per_ml, mw_da)
+    if kd_intrinsic_M and not kd_source:
+        raise ValueError("kd_intrinsic_M requires kd_source naming its origin; "
+                         "an unattributed affinity is how a receptor aptamer's "
+                         "Kd ends up labelling a design against the ligand")
 
     # Pick the architecture the parent can actually support. A Watson-Crick
     # parent is destabilised in itself; only a quadruplex, whose opening energy
@@ -87,6 +101,10 @@ def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float,
         window = WINDOW
     in_window = [v for v in lib if window[0] <= v.dd_g <= window[1]]
     rows = score.assess_all(in_window, parent, core, kd_intrinsic_M, clinical_M)
+    if kd_intrinsic_M is None:
+        for r in rows:
+            r["kd_apparent_nM"] = None
+            r["occupancy_at_clinical"] = None
     passing = [r for r in rows if r["passes"]]
 
     ctrls = plate.controls(parent, lib)
@@ -126,7 +144,8 @@ def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float,
         "design_window": list(window),
         "parent": parent,
         "core": list(core),
-        "kd_intrinsic_nM": kd_intrinsic_M * 1e9,
+        "kd_intrinsic_nM": (kd_intrinsic_M * 1e9) if kd_intrinsic_M else None,
+        "kd_source": kd_source or "not reported in the literature",
         "library_size": len(lib),
         "in_window": len(in_window),
         "passing": len(passing),
@@ -141,7 +160,8 @@ def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float,
         "clinical_bands": [(name, thermo.pg_per_ml_to_molar(lo, mw_da),
                             thermo.pg_per_ml_to_molar(hi, mw_da))
                            for name, lo, hi in CLINICAL_PG],
-        "kd_apparent_nM": [r["kd_apparent_nM"] for r in selected],
+        "kd_apparent_nM": [r["kd_apparent_nM"] for r in selected
+                           if r["kd_apparent_nM"] is not None],
     }
 
 
@@ -240,7 +260,11 @@ def artifacts(result: dict, out_dir: Path) -> dict:
 
 if __name__ == "__main__":
     IL6 = "GGTGGCAGGAGGACTATTTATTTGCTTTTCT"
-    res = run(IL6, core=(1, 13), kd_intrinsic_M=8.5e-9, target="IL-6")
+    # No Kd: this parent, the "IL-6 adaptor" of PMC11506342, has no published
+    # affinity. The 8.5 nM once used here belongs to AIR-3A, which binds the
+    # IL-6 *receptor* — a different protein — and produced a column of confident
+    # apparent-Kd values for designs against the ligand.
+    res = run(IL6, core=(1, 13), kd_intrinsic_M=None, target="IL-6")
     print(f"library {res['library_size']:,} -> window {res['in_window']:,} -> "
           f"pass {res['passing']:,} -> plate {res['selected']}")
     print("failures:", res["failure_reasons"])
