@@ -25,8 +25,8 @@ binding-induced **conformational change**, so a high-affinity aptamer that does
 not switch reports nothing.
 
 That makes folding free energy the design variable — which ViennaRNA computes —
-rather than affinity, which no method predicts. But switching costs affinity: the
-target pays the core-opening energy itself, so
+rather than affinity, which for this class of molecule has to be measured. But
+switching costs affinity: the target pays the core-opening energy itself, so
 
     Kd_app = Kd_intrinsic x (1 + e^(dG_open / RT))
 
@@ -64,7 +64,7 @@ To skip retrieval and design from a known parent:
 
 | Module | Role |
 |---|---|
-| `literature.py` | Full-text **grep** for sequences, then an LLM read of the hits. Topic search returns SELEX reviews; the thing wanted is a literal ACGT string. |
+| `literature.py` | Full-text **grep** for sequences, then deterministic regex extraction requiring the target named in the same paragraph. Topic search returns SELEX reviews; the thing wanted is a literal ACGT string. The LLM reader is an optional fallback. |
 | `thermo.py` | Folding, opening energy, apparent Kd. DNA parameters at 37 C. |
 | `generate.py` | Two architectures: a competing tail (for quadruplex parents) and intrinsic destabilisation (for Watson-Crick ones). |
 | `score.py` | Switching, specificity, manufacturability. Hard filters first, then rank. |
@@ -79,11 +79,14 @@ To skip retrieval and design from a known parent:
 contact their aptamers. Every ddG is computed against an assumed span, recorded
 as `core_assumed` in each run's `manifest.json`.
 
-**Retrieval has precision and recall problems.** It greps for a target name and
-a sequence co-occurring, and co-occurrence is not attribution: it has returned
-anti-HIV-integrase aptamers for an IL-6 query, and an anti-IL-6-*receptor*
-aptamer as though it bound IL-6. Read what the agent reports before using it.
-Recall varies between runs because the reader model is not deterministic.
+**Retrieval attributes by proximity, not by reading.** A sequence is accepted
+when the target is named in the same paragraph. That is far stricter than the
+document-level co-occurrence used earlier — which returned anti-HIV-integrase
+aptamers for an IL-6 query, and an anti-IL-6-*receptor* aptamer as though it
+bound IL-6 — but it is still not comprehension. A regex over fifty papers also
+matches primers and linkers, so candidates are ranked by how many independent
+papers print the same sequence and only the best ten are returned. Check that a
+candidate's paper is really about your target before designing from it.
 
 **Most parents have no published Kd.** Affinity-derived output is then omitted
 rather than estimated. Supplying a Kd requires naming its source.
