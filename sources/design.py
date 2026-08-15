@@ -240,9 +240,14 @@ def artifacts(result: dict, out_dir: Path) -> dict:
     # The dose and plate figures need a selection to draw. With none, the funnel
     # and window still carry the whole story of why, so they are rendered anyway.
     if result["selected"]:
-        out["dose"] = plots.dose_response(
-            result["kd_apparent_nM"], result["clinical_bands"], result["target"],
-            str(out_dir / f"{t}_dose.png"), kd_intrinsic_nM=result["kd_intrinsic_nM"])
+        # No dose-response without a measured affinity. The curve's whole content
+        # is where it sits on the concentration axis, and that position comes
+        # from Kd; drawn from a stand-in it is a picture of an assumption.
+        if result["kd_apparent_nM"]:
+            out["dose"] = plots.dose_response(
+                result["kd_apparent_nM"], result["clinical_bands"], result["target"],
+                str(out_dir / f"{t}_dose.png"),
+                kd_intrinsic_nM=result["kd_intrinsic_nM"])
         out["plate"] = plots.plate_map(
             result["wells"], str(out_dir / f"{t}_plate.png"),
             null_p95=pc["null_p95"], observed=pc["observed"])
