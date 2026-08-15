@@ -153,7 +153,40 @@ _KD_RE = re.compile(r"[Kk]\s*[dD]\b[^.\n]{0,40}?"
 _NAME_RE = re.compile(r"\b([A-Z][A-Za-z]{1,10}[- ]?\d{1,3}(?:\.\d)?|[A-Z]{2,5}\d{1,3})\b")
 
 
-def _extract_from_paper(doc_id: str, target_re: re.Pattern) -> list[tuple[str, str, str]]:
+SEQ_CONTEXT_PATTERN = "5[\u2032\u2019'`][ -]*(?:[ACGTacgt][ ]?){15,}"
+PER_PAPER_CAP = 25       # bound the slow path; partial coverage is reported
+
+
+def _paragraphs(grep_output: str) -> list[tuple[str, str]]:
+    """(doc_id, paragraph) pairs from a corpus grep, which interleaves them."""
+    out, doc = [], ""
+    for line in grep_output.splitlines():
+        m = GREP_DOC_RE.match(line)
+        if m:
+            doc = m.group(1)
+        elif doc and line.strip():
+            out.append((doc, line))
+    return out
+
+
+def _sequences_in(para: str, target_re: re.Pattern) -> list[tuple[str, str, str]]:
+    """Sequences in this paragraph, but only if the target is named in it too."""
+    if not target_re.search(para):
+        return []
+    kd = _KD_RE.search(para)
+    kd_text = kd.group(1).strip() if kd else ""
+    found = []
+    for m in list(_PRIMED_RE.finditer(para)) + list(_BARE_RE.finditer(para)):
+        raw = re.sub(r"[^ACGTUacgtu]", "", m.group(1)).upper()
+        if not MIN_LEN <= len(raw) <= MAX_LEN:
+            continue
+        lead = para[max(0, m.start() - 60):m.start()]
+        names = _NAME_RE.findall(lead)
+        found.append((raw, names[-1] if names else "", kd_text))
+    return found
+
+
+def _extract_from_paper(doc_id: str, target_re: re.Pattern) -> list[tuple[str, str, str]] | None:
     """(sequence, name, kd) triples this paper attributes to the target.
 
     Deterministic: the paragraph is fetched and parsed here rather than handed to
@@ -163,27 +196,13 @@ def _extract_from_paper(doc_id: str, target_re: re.Pattern) -> list[tuple[str, s
     given, is what returned anti-HIV-integrase aptamers for an IL-6 query: those
     papers do mention IL-6, several sections away from the sequence.
     """
-    out, err, rc = _run(["grep", "-n", "5[\u2032\u2019'`]|[ACGT]{18,}",
-                         f"/papers/{doc_id}/content.lines"])
-    if rc != 0 or not out:
-        return []
-
+    out, _, rc = _run(["grep", "-n", "5[\u2032\u2019'`]|[ACGT]{18,}",
+                       f"/papers/{doc_id}/content.lines"])
+    if rc != 0:
+        return None                      # a failed read, distinct from an empty one
     found: list[tuple[str, str, str]] = []
     for para in out.splitlines():
-        if not target_re.search(para):
-            continue                      # target not named alongside the sequence
-        kd = _KD_RE.search(para)
-        kd_text = kd.group(1).strip() if kd else ""
-
-        for m in list(_PRIMED_RE.finditer(para)) + list(_BARE_RE.finditer(para)):
-            raw = re.sub(r"[^ACGTUacgtu]", "", m.group(1)).upper()
-            if not MIN_LEN <= len(raw) <= MAX_LEN:
-                continue
-            # Name it from the words immediately before the sequence, which is
-            # where papers put it: "IL-6 adaptor 5'-GG...", "aptamer VR11 5'-TGG..."
-            lead = para[max(0, m.start() - 60):m.start()]
-            names = _NAME_RE.findall(lead)
-            found.append((raw, names[-1] if names else "", kd_text))
+        found.extend(_sequences_in(para, target_re))
     return found
 
 
@@ -214,28 +233,48 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
                 "note": "no paper contains both a target-aptamer phrase and a "
                         "written-out sequence"}
 
-    # Deterministic extraction first. It needs no reader model, so it works while
-    # the LLM layer is down, and it attributes more strictly.
+    # Deterministic extraction. Two passes, because neither call alone is both
+    # complete and cheap: the corpus-wide grep answers in one round trip but
+    # truncates each paragraph, so a sequence sitting late in a long methods
+    # paragraph is cut off — which is exactly where the IL-6 parent lives. The
+    # per-paper grep returns whole paragraphs but needs one call per document,
+    # and fifty of those in a row is slow and gets throttled.
     target_re = re.compile("|".join(re.escape(v) for v in variants), re.I)
     by_seq: dict[str, Parent] = {}
     order: list[str] = []
     docs = list(dict.fromkeys(GREP_DOC_RE.findall(grep_out)))[:max_papers]
-    for doc_id in docs:
-        for seq, name, kd in _extract_from_paper(doc_id, target_re):
-            entry = {"sequence": seq, "aptamer_name": name, "kd": kd,
-                     "chemistry": "DNA"}
-            _absorb(entry, doc_id, by_seq, order)
+    covered: set[str] = set()
+
+    bulk, _, bulk_rc = _run(["grep", "-n", "-m", "400", SEQ_CONTEXT_PATTERN,
+                             "/papers/", "--from", rid])
+    if bulk_rc == 0:
+        for doc_id, para in _paragraphs(bulk):
+            hits = _sequences_in(para, target_re)
+            for seq, name, kd in hits:
+                _absorb({"sequence": seq, "aptamer_name": name, "kd": kd,
+                         "chemistry": "DNA"}, doc_id, by_seq, order)
+            if hits:
+                covered.add(doc_id)
+
+    # Second pass only where the first found nothing, so the expensive path is
+    # bounded by how much the cheap one missed rather than by corpus size.
+    probed = failed = 0
+    for doc_id in [d for d in docs if d not in covered][:PER_PAPER_CAP]:
+        probed += 1
+        hits = _extract_from_paper(doc_id, target_re)
+        if hits is None:
+            failed += 1
+            continue
+        for seq, name, kd in hits:
+            _absorb({"sequence": seq, "aptamer_name": name, "kd": kd,
+                     "chemistry": "DNA"}, doc_id, by_seq, order)
 
     if by_seq:
         parents = sorted((by_seq[k] for k in order),
                          key=lambda p: (-p.corroboration, -len(p.sequence)))
-        # Report the best-attested handful, not everything matched. A regex over
-        # 53 papers also picks up primers, linkers and fragments; ranking by how
-        # many independent papers print the same sequence puts the real aptamer
-        # first and buries the incidental matches, but handing an agent a hundred
-        # candidates invites it to reason about noise.
         return {"target": target, "searched_as": variants, "n_papers": n_papers,
-                "papers_read": len(docs), "papers_failed": 0,
+                "papers_read": len(covered) + probed - failed,
+                "papers_failed": failed,
                 "total_sequences_matched": len(parents),
                 "extraction": "deterministic regex, target named in the same "
                               "paragraph as the sequence",
