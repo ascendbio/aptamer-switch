@@ -24,9 +24,16 @@ Four levers, deliberately overlapping in the energies they reach so the plate is
 not one long extrapolation:
 
     register    which stretch of the aptamer the tail is aimed at
-    length      coarse tuning, roughly 2.5 kcal/mol per added base
-    mismatch    fine tuning, roughly 1 kcal/mol, finer than length can reach
+    length      -1.6 kcal/mol per added base (measured over this library)
+    mismatch    +3.0 kcal/mol per central mismatch (measured, n=447)
     linker      loop entropy between aptamer and tail
+
+Those two figures were once documented the other way round - length as the coarse
+lever at 2.5 and mismatch as the fine one at 1.0 - which is backwards. Measured
+on the library itself, a mismatch moves the energy roughly twice as far as adding
+a base does. Length is the fine adjustment here, not the coarse one. The levers
+are kept for the coverage they give together, but neither number was checked
+before it was written down.
 """
 
 from __future__ import annotations
@@ -80,10 +87,10 @@ def _mismatched_tails(tail: str, n_mismatch: int) -> list[tuple[str, int]]:
     """Tails carrying deliberate mismatches.
 
     Mismatch position matters as much as count: central mismatches destabilise a
-    duplex far more than terminal ones, which is what makes them the fine lever.
-    A mismatch three bases in costs roughly a kcal/mol where removing a base
-    costs two and a half, and walking the position sweeps that range
-    continuously instead of in steps.
+    duplex far more than terminal ones, so walking the position sweeps a range
+    rather than stepping. Measured on this library a central mismatch costs about
+    +3.0 kcal/mol against about -1.6 for each base of length, so mismatches are
+    the coarser of the two levers, not the finer.
     """
     if n_mismatch == 0:
         return [(tail, 0)]

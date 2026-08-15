@@ -169,10 +169,11 @@ def dose_response(kd_values_nM: list[float], clinical: list[tuple[str, float, fl
         ax.plot(conc, conc / (conc + kd), color=colour, linewidth=width,
                 linestyle=style, label=label, zorder=3)
 
-    # 10% occupancy is roughly where an E-AB signal clears drift; below it the
-    # well is reporting noise regardless of how good the design is.
+    # 10% is a convention this project adopted, not a measured detection limit.
+    # E-AB drift depends on the electrode, the monolayer and the medium, and no
+    # source is attached to this figure. Drawn as an orientation line only.
     ax.axhline(0.10, color=INK_SOFT, linestyle="--", linewidth=1, zorder=2)
-    ax.text(conc[0], 0.115, " 10% occupancy — practical floor for E-AB",
+    ax.text(conc[0], 0.115, " 10% occupancy — assumed floor, not measured",
             fontsize=8, color=INK_SOFT)
 
     ax.set_xscale("log")

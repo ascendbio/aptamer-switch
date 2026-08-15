@@ -55,17 +55,26 @@ import thermo  # noqa: E402
 # itself is unimolecular and does not pay an entropic search cost, so it wins
 # unless the dimer is substantially more stable. Surface density then manages
 # what is left, in the lab, where it belongs.
-DIMER_MARGIN_LIMIT = -2.0    # kcal/mol the dimer may beat the intramolecular fold by
+# Chosen, not derived. How much more stable the intermolecular duplex may be
+# than the intramolecular fold before the design is rejected.
+DIMER_MARGIN_LIMIT = -6.0
 
-# duplexfold() returns the base-pairing energy of two strands already in contact.
-# It does not charge for bringing them together, while the intramolecular fold it
-# is compared against does pay a hairpin loop penalty. Left uncorrected the dimer
-# therefore "wins" by roughly this constant for every candidate, which is exactly
-# the 3-9 kcal/mol spread that flagged 100% of one parent's library. Helix
-# initiation in the unified nearest-neighbour model is about +4.1 kcal/mol at
-# 37 C; surface density on the electrode pushes the true value higher still, so
-# this is the conservative end.
-INTERMOLECULAR_INIT = 4.1
+# NOT a measured correction. An earlier version added +4.1 kcal/mol here as a
+# "duplex initiation" term, justified by memory of the unified nearest-neighbour
+# parameters. That justification does not survive checking: ViennaRNA exposes no
+# duplexInit parameter, and cofold() and duplexfold() return identical energies
+# for the same pair of strands (measured over 60 random duplexes: mean difference
+# +0.00, sd 0.00). There is no missing term of that size to restore, and the
+# constant silently took one parent's library from 182 passing to 644.
+#
+# The underlying physics is real - an intermolecular association pays a
+# concentration-dependent entropic cost that duplexfold does not model, and on a
+# packed electrode surface the effective concentration is not solution-like - but
+# ViennaRNA cannot supply that number and neither can I. So no offset is applied,
+# and the threshold below is stated for what it is: a judgement, not a
+# measurement. Sensitivity is reported by score.py's __main__ so its influence is
+# visible rather than buried.
+INTERMOLECULAR_INIT = 0.0
 
 # The tail must prefer its intended site over any other site in the construct by
 # a clear margin, or the switch reports the wrong conformational change.
@@ -230,8 +239,10 @@ if __name__ == "__main__":
 
     IL6 = "GGTGGCAGGAGGACTATTTATTTGCTTTTCT"
     CORE = (1, 13)
-    KD = 8.5e-9                                  # AIR-3A, from the literature tool
-    CLINICAL = thermo.pg_per_ml_to_molar(5000, 21000)   # severe sepsis
+    # No Kd: AIR-3A's 8.5 nM belongs to an anti-IL-6-RECEPTOR aptamer, a
+    # different protein, and this parent has no published affinity.
+    KD = None
+    CLINICAL = 0.0
 
     lib = generate.library(IL6, CORE)
     window = [v for v in lib if -2 <= v.dd_g <= 2]
@@ -247,8 +258,16 @@ if __name__ == "__main__":
     for reason, n in reasons.most_common():
         print(f"  {n:5d}  {reason}")
 
+    print("\nsensitivity of the dimer threshold (a chosen value, not a measured one):")
+    for limit in (-2.0, -4.0, -6.0, -8.0, -10.0):
+        n = sum(1 for r in rows
+                if r["dimer_margin"] >= limit and r["specificity_margin"] is not None
+                and r["specificity_margin"] >= SPECIFICITY_MARGIN)
+        mark = "  <- in use" if limit == DIMER_MARGIN_LIMIT else ""
+        print(f"  DIMER_MARGIN_LIMIT {limit:+5.1f} -> {n:5d} pass{mark}")
+
     print("\ntop 5 by rank:")
     for r in rows[:5]:
         print(f"  {r['rank']:3d}  {r['name']}  ddG {r['dd_g']:+5.2f}  "
-              f"margin {r['specificity_margin']:+5.2f}  dimer {r['self_dimer_dg']:6.2f}  "
-              f"Kd_app {r['kd_apparent_nM']:8.1f} nM")
+              f"margin {r['specificity_margin']:+5.2f}  "
+              f"dimer margin {r['dimer_margin']:+6.2f}")

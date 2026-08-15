@@ -27,18 +27,40 @@ WINDOW = (-2.0, 2.0)
 N_BINS = 8
 SEED = 20260815
 
-# IL-6 and TNF-alpha are both ~20 kDa; used to turn clinical pg/mL into molar.
-DEFAULT_MW = 21000.0
+# Mean residue masses, minus one water per peptide bond, so molecular weight is
+# computed from the actual sequence instead of assumed. A single default was
+# wrong the moment a second target appeared: 21 kDa fits IL-6 but TNF-alpha is a
+# 17 kDa monomer that circulates as a ~52 kDa trimer, and pg/mL to molar is a
+# division by exactly this number.
+_RESIDUE_DA = {
+    "A": 71.08, "R": 156.19, "N": 114.10, "D": 115.09, "C": 103.14,
+    "E": 129.12, "Q": 128.13, "G": 57.05, "H": 137.14, "I": 113.16,
+    "L": 113.16, "K": 128.17, "M": 131.19, "F": 147.18, "P": 97.12,
+    "S": 87.08, "T": 101.10, "W": 186.21, "Y": 163.18, "V": 99.13,
+}
+WATER_DA = 18.02
 
-# The concentrations that matter clinically, in pg/mL. Cytokine sensing lives or
-# dies on whether the sensor reaches these, so they travel with the design.
-CLINICAL_PG = [
+
+def molecular_weight(sequence: str) -> float:
+    """Monomer mass in daltons from the sequence itself."""
+    return sum(_RESIDUE_DA.get(a, 110.0) for a in sequence.upper()) + WATER_DA
+
+
+# UNCITED, and specific to IL-6. These bands are the author's recollection of
+# circulating IL-6 in health, inflammation and sepsis; no source is attached and
+# they have not been checked against one. They are used only to shade the
+# background of the dose-response figure, never to compute a result, and that
+# figure is now drawn only when a measured Kd exists. Do not quote them, and do
+# not apply them to another cytokine: TNF-alpha and IL-10 circulate at different
+# levels and would need their own, sourced.
+CLINICAL_PG_IL6_UNCITED = [
     ("healthy", 1, 10),
     ("mild inflammation", 10, 100),
     ("sepsis", 100, 2_000),
     ("severe sepsis", 2_000, 10_000),
     ("cytokine storm", 10_000, 100_000),
 ]
+CLINICAL_PG = CLINICAL_PG_IL6_UNCITED
 
 
 def _tile(rows: list[dict], n: int, window: tuple[float, float] = WINDOW) -> list[dict]:
@@ -66,7 +88,7 @@ def _tile(rows: list[dict], n: int, window: tuple[float, float] = WINDOW) -> lis
 
 
 def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float | None,
-        target: str = "IL-6", mw_da: float = DEFAULT_MW,
+        target: str = "IL-6", mw_da: float | None = None,
         clinical_pg_per_ml: float = 5000.0, kd_source: str = "") -> dict:
     """Design the plate and return everything needed to justify it.
 
@@ -79,7 +101,10 @@ def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float | None,
 
     `kd_source` records where the number came from, so a reader can judge it.
     """
-    clinical_M = thermo.pg_per_ml_to_molar(clinical_pg_per_ml, mw_da)
+    # Without a target sequence there is no honest molecular weight, so the
+    # clinical conversion is skipped rather than defaulted.
+    clinical_M = (thermo.pg_per_ml_to_molar(clinical_pg_per_ml, mw_da)
+                  if mw_da else 0.0)
     if kd_intrinsic_M and not kd_source:
         raise ValueError("kd_intrinsic_M requires kd_source naming its origin; "
                          "an unattributed affinity is how a receptor aptamer's "
@@ -157,9 +182,10 @@ def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float | None,
         "picked_names": {r["name"] for r in selected},
         "wells": wells,
         "position_check": {"observed": observed, "null_p95": p95},
-        "clinical_bands": [(name, thermo.pg_per_ml_to_molar(lo, mw_da),
-                            thermo.pg_per_ml_to_molar(hi, mw_da))
-                           for name, lo, hi in CLINICAL_PG],
+        "clinical_bands": ([(name, thermo.pg_per_ml_to_molar(lo, mw_da),
+                             thermo.pg_per_ml_to_molar(hi, mw_da))
+                            for name, lo, hi in CLINICAL_PG] if mw_da else []),
+        "clinical_bands_are_uncited": True,
         "kd_apparent_nM": [r["kd_apparent_nM"] for r in selected
                            if r["kd_apparent_nM"] is not None],
     }
