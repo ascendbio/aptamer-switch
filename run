@@ -1,0 +1,5 @@
+#!/bin/bash
+# Pin the venv that has ViennaRNA, gradio and the Agent SDK.
+VENV="$HOME/Documents/AscendBiosci/hackathon-mcp/venv/bin/python"
+cd "$(dirname "$0")"
+if [ -z "$1" ]; then exec "$VENV" app.py; else exec "$VENV" agent.py "$@"; fi
