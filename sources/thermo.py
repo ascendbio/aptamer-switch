@@ -6,13 +6,14 @@ the electrode changes, the electron-transfer rate changes, and that is the
 signal. A high-affinity aptamer that does not change shape gives no signal at
 all.
 
-So the design variable is not affinity — which nobody can predict — but the free
-energy cost of opening the binding core, which ViennaRNA computes directly:
+So the design variable is not affinity but the free energy cost of opening the
+binding core, which ViennaRNA computes directly:
 
     dG_open  =  G(ensemble, core forced unpaired)  -  G(ensemble, unconstrained)
 
-That single number drives both halves of the trade-off this module exists to
-quantify:
+No validated method predicts aptamer-protein affinity, so it is treated here as
+an input to be looked up or measured, never computed. That single number drives
+both halves of the trade-off this module exists to quantify:
 
     gain     rises with dG_open — a core that is already open cannot switch
     affinity FALLS with dG_open — the target must pay the opening cost itself,

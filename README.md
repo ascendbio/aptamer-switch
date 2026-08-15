@@ -5,8 +5,17 @@ folds them, builds a library of structure-switching variants, scores every
 candidate on switching thermodynamics, specificity and manufacturability, and
 returns 96 synthesis-ready wells with a vendor order file.
 
-It does not predict affinity. Nothing does. The plate is designed to *find* the
-optimum in one wet-lab round rather than to guess it.
+It does not predict binding affinity. For aptamer-protein pairs there is no
+validated predictor the author is aware of: the field establishes affinity by
+measurement, and published aptamers frequently carry no reported Kd at all. This
+is a claim about aptamers specifically, not about affinity prediction generally -
+free-energy perturbation and models such as Boltz-2 do make useful predictions
+for protein-small-molecule binding, and Boltz-2 is one command away in the same
+Proto toolkit used here. It is trained on small-molecule ligands, so it is not
+applicable to a 40-mer of DNA.
+
+The plate is therefore designed to *find* the optimum in one wet-lab round rather
+than to guess it.
 
 ## Why a plate and not a prediction
 

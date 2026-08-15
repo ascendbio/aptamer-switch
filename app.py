@@ -36,8 +36,10 @@ build a variant library of structure-switching designs, score every candidate on
 switching thermodynamics, specificity and manufacturability, and return 96
 synthesis-ready wells with a vendor order file.
 
-What I do not do is predict affinity — nobody can. The plate is designed to find
-the optimum in one wet-lab round, not to guess it."""
+What I do not do is predict binding affinity. For aptamer–protein pairs I know of
+no validated predictor — unlike protein–small-molecule binding, where free-energy
+methods and models such as Boltz-2 genuinely do make useful predictions. So the
+plate is built to find the optimum in one wet-lab round rather than guess it."""
 
 FOOTER = ("<sub>Evidence: published aptamer sequences via Paperclip full-text grep · "
           "ViennaRNA 2.7.2 folding with DNA parameters at 37 °C · "
