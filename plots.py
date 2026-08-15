@@ -122,9 +122,10 @@ def design_window(rows: list[dict], picked: set[str], path: str) -> str:
            "specificity margin (kcal/mol)")
     ax.set_title("What the plate covers", fontsize=12, color=INK,
                  fontweight="bold", loc="left", pad=10)
-    leg = ax.legend(frameon=False, fontsize=8.5, loc="lower right")
-    for t in leg.get_texts():
-        t.set_color(INK_SOFT)
+    if ax.get_legend_handles_labels()[0]:
+        leg = ax.legend(frameon=False, fontsize=8.5, loc="lower right")
+        for t in leg.get_texts():
+            t.set_color(INK_SOFT)
 
     fig.tight_layout()
     fig.savefig(path, dpi=170, facecolor=SURFACE)

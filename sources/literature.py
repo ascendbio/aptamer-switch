@@ -7,8 +7,14 @@ a methods section. So this greps the corpus body for the sequence itself,
 constrained to documents that also talk about the target, and only then spends
 an LLM read on the survivors.
 
-    grep  --bool '"<target>.{0,10}aptamer" AND "5.{0,3}-[ACGT]{15,}"'
+    grep  --bool '"<target>.{0,14}aptamer" AND "5.{0,3}-(?:[ACGT][ ]?){15,}"'
     map   the survivors, extracting sequence, name, chemistry and Kd
+
+The optional space inside the sequence pattern is not cosmetic. Papers routinely
+print aptamers in triplets - 5'-GG TGG CAG GAG GAC TAT TTA TTT GCT TTT CT-3' -
+and a pattern demanding contiguous bases silently misses them. Requiring
+contiguity cost the one published IL-6 aptamer that already has a continuous
+E-AB sensor built on it.
 
 On TNF-alpha that goes 100 loosely-matching papers -> 11 that write a sequence
 out -> the 25-mer VR11, reported identically by four independent groups.
@@ -42,14 +48,28 @@ SEQ_RE = re.compile(r"[ACGTUacgtu]{15,}")
 
 # Each paper answers against this shape, so the sequence arrives as a field
 # instead of being fished out of a paragraph the reader model rephrases every run.
+# An array, not one field. Papers that report several aptamers are common - a
+# selection round publishes a family, a sensor paper prints its probe alongside
+# controls - and a single-valued schema makes the reader choose one and discard
+# the rest. That silently dropped the IL-6 aptamer with an existing continuous
+# E-AB sensor from a paper the grep had correctly found.
 SCHEMA = json.dumps({
     "type": "object",
     "properties": {
         "has_sequence": {"type": "boolean"},
-        "aptamer_name": {"type": "string"},
-        "sequence": {"type": "string"},
-        "chemistry": {"type": "string", "enum": ["DNA", "RNA", "unknown"]},
-        "kd": {"type": "string"},
+        "aptamers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "aptamer_name": {"type": "string"},
+                    "sequence": {"type": "string"},
+                    "chemistry": {"type": "string", "enum": ["DNA", "RNA", "unknown"]},
+                    "kd": {"type": "string"},
+                },
+                "required": ["sequence"],
+            },
+        },
     },
     "required": ["has_sequence"],
 })
@@ -110,12 +130,17 @@ def _name_variants(target: str) -> list[str]:
     return sorted({v.strip() for v in out if len(v.strip()) >= 2}, key=len, reverse=True)
 
 
-def find_parents(target: str, max_papers: int = 40) -> dict:
+def find_parents(target: str, max_papers: int = 60) -> dict:
     """Published aptamer sequences for `target`, with corroboration counts."""
     variants = _name_variants(target)
     alt = "|".join(re.escape(v) for v in variants)
-    query = (f'"(?:{alt}).{{0,14}}aptamer|aptamer.{{0,14}}(?:{alt})" '
-             f'AND "5.{{0,3}}-[ACGTUacgtu]{{15,}}"')
+    # 60 characters, not 14: papers introduce an aptamer at a clause's distance
+    # from its target ("an aptamer previously selected against human IL-6"), and
+    # a tight window drops them. Widening it took IL-6 from 22 matched papers to
+    # 48, and pulled in the one aptamer that already has a continuous E-AB sensor
+    # built on it.
+    query = (f'"(?:{alt}).{{0,60}}aptamer|aptamer.{{0,60}}(?:{alt})" '
+             f'AND "5.{{0,3}}-(?:[ACGTUacgtu][ ]?){{15,}}"')
 
     grep_out = _run(["grep", "--bool", query, "/papers/"])
     rid = _results_id(grep_out)
@@ -133,10 +158,11 @@ def find_parents(target: str, max_papers: int = 40) -> dict:
         # at -n 12 of 23, TNF-alpha returned nothing at all.
         "map", "--from", rid, "-n", str(min(n_papers, max_papers)),
         "--output-schema", SCHEMA,
-        f"Find any explicit nucleotide sequence for an aptamer that binds "
-        f"{target}. Report the sequence exactly as written, 5' to 3', with no "
-        f"spaces. Set has_sequence false if the paper only cites such an aptamer "
-        f"without printing its sequence.",
+        f"List EVERY explicit nucleotide sequence in this paper for an aptamer "
+        f"that binds {target}, including probes used in sensors and any variants "
+        f"or truncations. Report each sequence exactly as written, 5' to 3', "
+        f"removing spaces. Set has_sequence false only if the paper prints no "
+        f"such sequence at all.",
     ])
 
     return {"target": target, "searched_as": variants, "n_papers": n_papers,
@@ -160,35 +186,42 @@ def _parse(map_out: str) -> list[Parent]:
         if not data.get("has_sequence"):
             continue
 
-        raw = re.sub(r"[^ACGTUacgtu]", "", str(data.get("sequence", ""))).upper()
-        if not MIN_LEN <= len(raw) <= MAX_LEN:
-            continue
+        for entry in data.get("aptamers") or []:
+            _absorb(entry, doc.group(1), by_seq, order)
 
-        chem = data.get("chemistry") or ("RNA" if "U" in raw else "DNA")
+    parents = [by_seq[s] for s in order]
+    parents.sort(key=lambda p: (-p.corroboration, len(p.sequence)))
+    return parents
+
+
+def _absorb(entry: dict, doc_id: str, by_seq: dict, order: list) -> None:
+    """Fold one reported aptamer into the running set."""
+    if True:
+        raw = re.sub(r"[^ACGTUacgtu]", "", str(entry.get("sequence", ""))).upper()
+        if not MIN_LEN <= len(raw) <= MAX_LEN:
+            return
+
+        chem = entry.get("chemistry") or ("RNA" if "U" in raw else "DNA")
         seq = raw.replace("U", "T")
         # A poly-T or poly-A run at either end is a surface-attachment spacer,
         # not part of the aptamer. Stripping it lets the same aptamer reported
         # with and without a spacer count as one sequence rather than two.
         seq = re.sub(r"^(?:T{6,}|A{6,})|(?:T{6,}|A{6,})$", "", seq)
         if len(seq) < MIN_LEN:
-            continue
+            return
 
         p = by_seq.get(seq)
         if p is None:
             p = by_seq[seq] = Parent(sequence=seq, chemistry=chem)
             order.append(seq)
-        p.papers.append(doc.group(1))
-        name = str(data.get("aptamer_name", "")).strip()
+        p.papers.append(doc_id)
+        name = str(entry.get("aptamer_name", "")).strip()
         if name and name not in p.names:
             p.names.append(name)
-        kd = str(data.get("kd", "")).strip()
+        kd = str(entry.get("kd", "")).strip()
         if kd and kd.lower() not in {"", "none", "not reported", "n/a"} \
                 and kd not in p.kd_notes:
             p.kd_notes.append(kd)
-
-    parents = [by_seq[s] for s in order]
-    parents.sort(key=lambda p: (-p.corroboration, len(p.sequence)))
-    return parents
 
 
 def _as_dict(p: Parent) -> dict:
