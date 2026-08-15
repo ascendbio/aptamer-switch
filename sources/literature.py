@@ -38,7 +38,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 TIMEOUT = 600
-MIN_LEN, MAX_LEN = 15, 120       # shorter is a primer, longer is not an aptamer
+MIN_LEN, MAX_LEN = 15, 120
+TOP_N = 10        # best-attested candidates returned to the agent       # shorter is a primer, longer is not an aptamer
 
 # grep prints "  PMC12345/"; map prints "    PMC12345 · 1923ms".
 GREP_DOC_RE = re.compile(r"^\s*(PMC\d+|bio_\S+|med_\S+|arx_[\d.]+)/", re.M)
@@ -142,6 +143,50 @@ def _name_variants(target: str) -> list[str]:
     return sorted({v.strip() for v in out if len(v.strip()) >= 2}, key=len, reverse=True)
 
 
+# 5'-GGTGG... or 5′ GG TGG CAG..., with or without spaces between bases.
+_PRIMED_RE = re.compile(r"5\s*[\u2032\u2019'`]\s*[-\u2013\u2014]?\s*"
+                        r"((?:[ACGTUacgtu][ \t]?){15,})")
+_BARE_RE = re.compile(r"(?<![A-Za-z])((?:[ACGTU]){18,})(?![A-Za-z])")
+_KD_RE = re.compile(r"[Kk]\s*[dD]\b[^.\n]{0,40}?"
+                    r"([0-9]+(?:\.[0-9]+)?\s*(?:\u00b1\s*[0-9.]+\s*)?"
+                    r"(?:[pnu\u00b5]M|mM|nM|pM|fM))")
+_NAME_RE = re.compile(r"\b([A-Z][A-Za-z]{1,10}[- ]?\d{1,3}(?:\.\d)?|[A-Z]{2,5}\d{1,3})\b")
+
+
+def _extract_from_paper(doc_id: str, target_re: re.Pattern) -> list[tuple[str, str, str]]:
+    """(sequence, name, kd) triples this paper attributes to the target.
+
+    Deterministic: the paragraph is fetched and parsed here rather than handed to
+    a reader model. That is not merely a fallback for when the reader is down. It
+    is stricter, because it can insist the target is named in the *same paragraph*
+    as the sequence. Document-level co-occurrence, which is all the reader was
+    given, is what returned anti-HIV-integrase aptamers for an IL-6 query: those
+    papers do mention IL-6, several sections away from the sequence.
+    """
+    out, err, rc = _run(["grep", "-n", "5[\u2032\u2019'`]|[ACGT]{18,}",
+                         f"/papers/{doc_id}/content.lines"])
+    if rc != 0 or not out:
+        return []
+
+    found: list[tuple[str, str, str]] = []
+    for para in out.splitlines():
+        if not target_re.search(para):
+            continue                      # target not named alongside the sequence
+        kd = _KD_RE.search(para)
+        kd_text = kd.group(1).strip() if kd else ""
+
+        for m in list(_PRIMED_RE.finditer(para)) + list(_BARE_RE.finditer(para)):
+            raw = re.sub(r"[^ACGTUacgtu]", "", m.group(1)).upper()
+            if not MIN_LEN <= len(raw) <= MAX_LEN:
+                continue
+            # Name it from the words immediately before the sequence, which is
+            # where papers put it: "IL-6 adaptor 5'-GG...", "aptamer VR11 5'-TGG..."
+            lead = para[max(0, m.start() - 60):m.start()]
+            names = _NAME_RE.findall(lead)
+            found.append((raw, names[-1] if names else "", kd_text))
+    return found
+
+
 def find_parents(target: str, max_papers: int = 60) -> dict:
     """Published aptamer sequences for `target`, with corroboration counts."""
     variants = _name_variants(target)
@@ -168,6 +213,36 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
                 "parents": [],
                 "note": "no paper contains both a target-aptamer phrase and a "
                         "written-out sequence"}
+
+    # Deterministic extraction first. It needs no reader model, so it works while
+    # the LLM layer is down, and it attributes more strictly.
+    target_re = re.compile("|".join(re.escape(v) for v in variants), re.I)
+    by_seq: dict[str, Parent] = {}
+    order: list[str] = []
+    docs = list(dict.fromkeys(GREP_DOC_RE.findall(grep_out)))[:max_papers]
+    for doc_id in docs:
+        for seq, name, kd in _extract_from_paper(doc_id, target_re):
+            entry = {"sequence": seq, "aptamer_name": name, "kd": kd,
+                     "chemistry": "DNA"}
+            _absorb(entry, doc_id, by_seq, order)
+
+    if by_seq:
+        parents = sorted((by_seq[k] for k in order),
+                         key=lambda p: (-p.corroboration, -len(p.sequence)))
+        # Report the best-attested handful, not everything matched. A regex over
+        # 53 papers also picks up primers, linkers and fragments; ranking by how
+        # many independent papers print the same sequence puts the real aptamer
+        # first and buries the incidental matches, but handing an agent a hundred
+        # candidates invites it to reason about noise.
+        return {"target": target, "searched_as": variants, "n_papers": n_papers,
+                "papers_read": len(docs), "papers_failed": 0,
+                "total_sequences_matched": len(parents),
+                "extraction": "deterministic regex, target named in the same "
+                              "paragraph as the sequence",
+                "caveat": "matches are attributed by proximity, not by reading. "
+                          "Check that a candidate's paper is really about this "
+                          "target before designing from it.",
+                "parents": [_as_dict(p) for p in parents[:TOP_N]]}
 
     map_out, map_err, map_rc = _run([
         # Read every matched paper, not a prefix of them. The grep result is
