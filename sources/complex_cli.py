@@ -67,9 +67,15 @@ def main() -> None:
     import store
 
     out_dir = pathlib.Path(__file__).resolve().parent.parent / "out"
+    # Everything that changes the answer goes in the key, including the model
+    # settings. Hashing only the sequences was correct while these sat at their
+    # defaults and would have gone quietly wrong the first time anyone raised
+    # num_steps or switched to the antibody-antigen checkpoint: same inputs, new
+    # config, stale structure returned as a hit.
+    cfg = {"model_checkpoint": "opendde_v1", "num_samples": 1, "num_steps": 200,
+           "num_cycles": 10, "use_msa": True}
     key = store.cache_key(tool="opendde-prediction", protein=protein,
-                          aptamer=aptamer, control=control, seed=seed,
-                          num_samples=1)
+                          aptamer=aptamer, control=control, seed=seed, **cfg)
     force = "--force" in sys.argv
     if not force:
         hit = store.cache_get(out_dir, key)
