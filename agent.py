@@ -158,9 +158,18 @@ async def design_plate(args: dict) -> dict:
     # parent that has none.
     raw_kd = args.get("kd_nM")
     kd_M = float(raw_kd) * 1e-9 if raw_kd else None
+    kd_source = (args.get("kd_source") or "").strip()
+    # Do not manufacture the provenance. An earlier version filled a missing
+    # kd_source with the string "reported for this exact sequence", which made
+    # the attribution check pass by inventing the very attribution it existed to
+    # demand — the same failure as the borrowed Kd, one level up.
+    if kd_M and not kd_source:
+        return _ok({"error": "kd_nM was given without kd_source. Supply the paper "
+                             "reporting that Kd for this exact sequence and target, "
+                             "or omit kd_nM and affinity-derived output will be "
+                             "omitted rather than estimated."})
     result = design.run(seq, (start, end), kd_M, target=args["target"],
-                        kd_source=args.get("kd_source", "") or
-                        ("reported for this exact sequence" if kd_M else ""))
+                        kd_source=kd_source)
     art = design.artifacts(result, OUT)
 
     if not result["selected"]:
