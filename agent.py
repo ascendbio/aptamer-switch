@@ -92,8 +92,13 @@ def _ok(payload: dict) -> dict:
     "Find published aptamer sequences for a biomarker. Call this first for any "
     "new target. Greps the full text of the literature for sequences rather than "
     "ranking on topic, then reads the hits. Returns each sequence with its "
-    "chemistry, reported Kd, source papers, and how many independent papers "
-    "report it identically. Pass the biomarker as it would be written in a paper, "
+    "chemistry, source papers, how many independent papers report it "
+    "identically, and any reported Kd parsed to nanomolar as kd_nM with the "
+    "paper it came from as kd_source. When a parent has kd_nM, pass both "
+    "straight through to design_plate so apparent affinity and clinical reach "
+    "are computed. affinities_reported_in_papers lists values stated elsewhere "
+    "in the same papers; those are not attributed to the sequence, so use one "
+    "only after checking the paper says it is that sequence's. Pass the biomarker as it would be written in a paper, "
     "e.g. 'IL-6' or 'TNF-alpha'. If the result carries search_failed, the "
     "extraction service failed and an empty parent list is NOT evidence that no "
     "aptamer exists - say so and retry rather than concluding absence.",
@@ -250,10 +255,19 @@ def _summarise(payload: str) -> str:
             return (f"no sequence in {d.get('papers_read', d.get('n_papers', 0))} "
                     f"papers read{suffix}")
         best = d["parents"][0]
-        return (f"{n} parent{'s' if n != 1 else ''} from {d.get('n_papers', 0)} papers · "
-                f"best {best['length']} nt {best['chemistry']}"
-                + (f", Kd {best['reported_kd'][0]}" if best.get("reported_kd") else "")
-                + f", {best['corroborating_papers']} paper(s)")
+        line = (f"{n} parent{'s' if n != 1 else ''} from {d.get('n_papers', 0)} "
+                f"papers · best {best['length']} nt {best['chemistry']}, "
+                f"{best['corroborating_papers']} paper(s)")
+        if best.get("kd_nM"):
+            line += f", Kd {best['kd_as_written']} ({best['kd_source']})"
+        with_kd = sum(1 for p in d["parents"] if p.get("kd_nM"))
+        if with_kd:
+            line += f" · {with_kd}/{n} with an attributed affinity"
+        elif best.get("affinities_reported_in_papers"):
+            line += (f" · affinities in its papers: "
+                     f"{', '.join(best['affinities_reported_in_papers'][:3])} "
+                     f"(not attributed to this sequence)")
+        return line
 
     if "opening_energy_trustworthy" in d:
         kind = "G-quadruplex" if d["core_is_quadruplex"] else "Watson-Crick"

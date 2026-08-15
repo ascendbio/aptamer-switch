@@ -31,15 +31,19 @@ EXAMPLES = ["IL-6", "TNF-alpha", "IL-10", "thrombin", "cortisol"]
 
 INTRO = """### Aptamer switch design for continuous biosensors
 
-Name a biomarker. I find published aptamers for it in the literature, fold them,
-build a variant library of structure-switching designs, score every candidate on
-switching thermodynamics, specificity and manufacturability, and return 96
-synthesis-ready wells with a vendor order file.
+Name a biomarker. I search the literature for published aptamers against it,
+fold them, and build a library of structure-switching designs — thousands of
+variants across tail length, register, mismatch and truncation. Each is scored on
+switching thermodynamics, on specificity against its own off-target sites and
+self-dimers, and on whether a vendor will synthesise it.
 
-What I do not do is predict binding affinity. For aptamer–protein pairs I know of
-no validated predictor — unlike protein–small-molecule binding, where free-energy
-methods and models such as Boltz-2 genuinely do make useful predictions. So the
-plate is built to find the optimum in one wet-lab round rather than guess it."""
+Where a paper reports an affinity I carry it through, and compute the apparent Kd
+the switch will have: destabilising an aptamer so it reports costs binding
+energy, and that cost is quantifiable.
+
+You get 96 wells tiling the usable design window, with controls, randomised
+positions, and a vendor order file — a plate built to locate the optimum in one
+wet-lab round."""
 
 FOOTER = ("<sub>Evidence: published aptamer sequences via Paperclip full-text grep · "
           "ViennaRNA 2.7.2 folding with DNA parameters at 37 °C · "

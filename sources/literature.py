@@ -95,6 +95,7 @@ class Parent:
     papers: list[str] = field(default_factory=list)
     names: list[str] = field(default_factory=list)
     kd_notes: list[str] = field(default_factory=list)
+    paper_affinities: list[str] = field(default_factory=list)
 
     @property
     def corroboration(self) -> int:
@@ -182,9 +183,15 @@ def _name_variants(target: str) -> list[str]:
 _PRIMED_RE = re.compile(r"5\s*[\u2032\u2019'`]\s*[-\u2013\u2014]?\s*"
                         r"((?:[ACGTUacgtu][ \t]?){15,})")
 _BARE_RE = re.compile(r"(?<![A-Za-z])((?:[ACGTU]){18,})(?![A-Za-z])")
-_KD_RE = re.compile(r"[Kk]\s*[dD]\b[^.\n]{0,40}?"
-                    r"([0-9]+(?:\.[0-9]+)?\s*(?:\u00b1\s*[0-9.]+\s*)?"
-                    r"(?:[pnu\u00b5]M|mM|nM|pM|fM))")
+# Affinity is written many ways and rarely sits beside the sequence: sequences
+# live in Methods, dissociation constants in Results. The pattern therefore
+# covers the common phrasings, and is searched over the whole paper rather than
+# the sequence's own paragraph.
+_KD_RE = re.compile(
+    r"(?:[Kk]\s*[_ ]?\s*[dD]\b|dissociation constant|binding affinit(?:y|ies)|"
+    r"affinit(?:y|ies)\s+of)[^.\n]{0,60}?"
+    r"([0-9]+(?:\.[0-9]+)?\s*(?:\u00b1\s*[0-9.]+\s*)?"
+    r"(?:fM|pM|nM|[u\u00b5]M|mM))")
 _NAME_RE = re.compile(r"\b([A-Z][A-Za-z]{1,10}[- ]?\d{1,3}(?:\.\d)?|[A-Z]{2,5}\d{1,3})\b")
 
 
@@ -219,6 +226,23 @@ def _sequences_in(para: str, target_re: re.Pattern) -> list[tuple[str, str, str]
         names = _NAME_RE.findall(lead)
         found.append((raw, names[-1] if names else "", kd_text))
     return found
+
+
+def _paper_affinities(doc_id: str) -> list[str]:
+    """Every affinity stated anywhere in this paper.
+
+    Paper-level, not sequence-level, and labelled as such downstream. A paper
+    reporting a selection round quotes several Kd values for several sequences,
+    so pinning one to a particular sequence from a whole-document scan would be a
+    guess. Reported so a reader can follow it up, used as an input only when the
+    number sits in the same paragraph as the sequence itself.
+    """
+    out, _, rc = _run(["grep", "-n", "-m", "40",
+                       "[Kk][ _]?[dD]|dissociation constant|binding affinit",
+                       f"/papers/{doc_id}/content.lines"])
+    if rc != 0:
+        return []
+    return [m.group(1).strip() for m in _KD_RE.finditer(out)]
 
 
 def _extract_from_paper(doc_id: str, target_re: re.Pattern) -> list[tuple[str, str, str]] | None:
@@ -303,6 +327,18 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
         for seq, name, kd in hits:
             _absorb({"sequence": seq, "aptamer_name": name, "kd": kd,
                      "chemistry": "DNA"}, doc_id, by_seq, order)
+
+    # One extra pass over just the papers that produced a candidate, to pick up
+    # affinities stated outside the sequence's own paragraph.
+    seq_papers = {d for p in by_seq.values() for d in p.papers}
+    affinity_by_paper = {d: _paper_affinities(d) for d in list(seq_papers)[:PER_PAPER_CAP]}
+    for parent in by_seq.values():
+        seen_aff: list[str] = []
+        for d in sorted(set(parent.papers)):
+            for a in affinity_by_paper.get(d, []):
+                if a not in seen_aff:
+                    seen_aff.append(a)
+        parent.paper_affinities = seen_aff
 
     if by_seq:
         parents = sorted((by_seq[k] for k in order),
@@ -423,7 +459,33 @@ def _absorb(entry: dict, doc_id: str, by_seq: dict, order: list) -> None:
             p.kd_notes.append(kd)
 
 
+_KD_UNITS = {"fM": 1e-6, "pM": 1e-3, "nM": 1.0, "uM": 1e3, "\u00b5M": 1e3, "mM": 1e6}
+
+
+def parse_kd_nM(text: str) -> float | None:
+    """A reported affinity as nanomolar, or None if it cannot be read.
+
+    Papers write affinity a dozen ways - '8.5 +/- 1 nM', '0.4 uM', 'Kd = 209 nM'.
+    Leaving it as prose meant the number was visible but unusable, so apparent Kd
+    went uncomputed even when the literature had supplied the input it needed.
+    """
+    m = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*(?:\u00b1\s*[0-9.]+\s*)?"
+                  r"(fM|pM|nM|[u\u00b5]M|mM)", text)
+    if not m:
+        return None
+    value, unit = float(m.group(1)), m.group(2)
+    factor = _KD_UNITS.get(unit) or _KD_UNITS.get(unit.replace("u", "\u00b5"))
+    return round(value * factor, 4) if factor else None
+
+
 def _as_dict(p: Parent) -> dict:
+    # Take the tightest reported affinity when a paper quotes several: aptamer
+    # papers often list a whole selection round, and the lead sequence is the
+    # one carried forward.
+    parsed = [(parse_kd_nM(k), k) for k in p.kd_notes]
+    usable = sorted((v, raw) for v, raw in parsed if v is not None)
+    kd_nM, kd_raw = usable[0] if usable else (None, "")
+
     return {
         "sequence": p.sequence,
         "length": len(p.sequence),
@@ -432,6 +494,14 @@ def _as_dict(p: Parent) -> dict:
         "papers": sorted(set(p.papers)),
         "reported_names": p.names[:4],
         "reported_kd": p.kd_notes[:4],
+        # Ready to hand straight to design_plate, with the paper it came from.
+        "kd_nM": kd_nM,
+        "kd_as_written": kd_raw,
+        "kd_source": sorted(set(p.papers))[0] if kd_nM else "",
+        # Affinities stated elsewhere in the same papers. Not attributed to this
+        # sequence — a paper may report a whole selection round — but worth
+        # surfacing so the number can be checked rather than missed.
+        "affinities_reported_in_papers": p.paper_affinities[:6],
     }
 
 
