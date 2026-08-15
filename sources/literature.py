@@ -90,10 +90,22 @@ class Parent:
         return len(set(self.papers))
 
 
-def _run(args: list[str]) -> str:
-    proc = subprocess.run(["paperclip", *args], capture_output=True,
-                          text=True, timeout=TIMEOUT)
-    return proc.stdout
+def _run(args: list[str]) -> tuple[str, str, int]:
+    """(stdout, stderr, returncode) — all three, deliberately.
+
+    An earlier version returned stdout alone. A failing subprocess then looked
+    exactly like a successful one that found nothing, and the caller reported
+    "no published sequence found across 53 papers" while the extraction service
+    was timing out on every one of them. A tool that cannot tell an empty result
+    from a broken one will eventually report the absence of something that is
+    there.
+    """
+    try:
+        proc = subprocess.run(["paperclip", *args], capture_output=True,
+                              text=True, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return "", f"paperclip {args[0]} exceeded {TIMEOUT}s", 124
+    return proc.stdout, proc.stderr, proc.returncode
 
 
 def _results_id(text: str) -> str | None:
@@ -142,7 +154,13 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
     query = (f'"(?:{alt}).{{0,60}}aptamer|aptamer.{{0,60}}(?:{alt})" '
              f'AND "5.{{0,3}}-(?:[ACGTUacgtu][ ]?){{15,}}"')
 
-    grep_out = _run(["grep", "--bool", query, "/papers/"])
+    grep_out, grep_err, grep_rc = _run(["grep", "--bool", query, "/papers/"])
+    if grep_rc != 0:
+        return {"target": target, "searched_as": variants, "n_papers": 0,
+                "parents": [], "search_failed": True,
+                "note": f"literature search failed (exit {grep_rc}): "
+                        f"{grep_err.strip()[:200]}. This is NOT evidence that no "
+                        f"aptamer exists."}
     rid = _results_id(grep_out)
     n_papers = len(set(GREP_DOC_RE.findall(grep_out)))
     if not rid or not n_papers:
@@ -151,7 +169,7 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
                 "note": "no paper contains both a target-aptamer phrase and a "
                         "written-out sequence"}
 
-    map_out = _run([
+    map_out, map_err, map_rc = _run([
         # Read every matched paper, not a prefix of them. The grep result is
         # ordered by document id, not by which papers actually print a
         # sequence, so truncating the list silently drops the useful ones:
@@ -165,8 +183,28 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
         f"such sequence at all.",
     ])
 
-    return {"target": target, "searched_as": variants, "n_papers": n_papers,
-            "parents": [_as_dict(p) for p in _parse(map_out)]}
+    # Each paper the reader completes is marked with a tick, each one it fails
+    # with a cross. Counting both is the difference between "these papers contain
+    # no sequence" and "these papers were never read".
+    read_ok = map_out.count("\u2713 ")
+    read_failed = map_out.count("\u2717 ")
+    parents = [_as_dict(p) for p in _parse(map_out)]
+
+    out = {"target": target, "searched_as": variants, "n_papers": n_papers,
+           "papers_read": read_ok, "papers_failed": read_failed,
+           "parents": parents}
+
+    if map_rc != 0 or (read_failed and not parents):
+        out["search_failed"] = True
+        out["note"] = (
+            f"the reader failed on {read_failed} of {read_ok + read_failed} papers"
+            f"{f' (exit {map_rc}: {map_err.strip()[:120]})' if map_rc else ''}. "
+            f"An empty result here is a failed extraction, NOT evidence that no "
+            f"aptamer exists for {target}. Re-run before concluding anything.")
+    elif read_failed:
+        out["note"] = (f"{read_failed} of {read_ok + read_failed} papers could not "
+                       f"be read; the parents listed may be incomplete.")
+    return out
 
 
 def _parse(map_out: str) -> list[Parent]:

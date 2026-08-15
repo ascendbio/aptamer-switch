@@ -94,7 +94,9 @@ def _ok(payload: dict) -> dict:
     "ranking on topic, then reads the hits. Returns each sequence with its "
     "chemistry, reported Kd, source papers, and how many independent papers "
     "report it identically. Pass the biomarker as it would be written in a paper, "
-    "e.g. 'IL-6' or 'TNF-alpha'.",
+    "e.g. 'IL-6' or 'TNF-alpha'. If the result carries search_failed, the "
+    "extraction service failed and an empty parent list is NOT evidence that no "
+    "aptamer exists - say so and retry rather than concluding absence.",
     {"target": str},
 )
 async def find_parents(args: dict) -> dict:
@@ -239,8 +241,14 @@ def _summarise(payload: str) -> str:
 
     if "parents" in d:
         n = len(d["parents"])
+        if d.get("search_failed"):
+            return (f"SEARCH FAILED — {d.get('papers_failed', 0)} papers unread; "
+                    f"this is not a negative result")
         if not n:
-            return f"no published sequence found across {d.get('n_papers', 0)} papers"
+            failed = d.get("papers_failed", 0)
+            suffix = f" ({failed} unread)" if failed else ""
+            return (f"no sequence in {d.get('papers_read', d.get('n_papers', 0))} "
+                    f"papers read{suffix}")
         best = d["parents"][0]
         return (f"{n} parent{'s' if n != 1 else ''} from {d.get('n_papers', 0)} papers · "
                 f"best {best['length']} nt {best['chemistry']}"
