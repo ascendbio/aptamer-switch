@@ -34,10 +34,20 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
 TIMEOUT = 600
+
+# The reader (map) is treated as an optional enrichment, never a dependency.
+# Extraction is deterministic and works without it, so a failing reader must cost
+# a bounded probe rather than a stalled pipeline: at 60s per paper internally, a
+# blind retry over fifty documents is fifty minutes of waiting to learn the same
+# thing a single probe learns in twenty seconds.
+MAP_PROBE_TIMEOUT = 25          # seconds; shorter than the reader's own 60s stall
+MAP_HEALTH_TTL = 300            # re-probe at most once every 5 minutes
+_map_health: dict[str, float | bool] = {"ok": False, "checked_at": 0.0}
 MIN_LEN, MAX_LEN = 15, 120
 TOP_N = 10        # best-attested candidates returned to the agent       # shorter is a primer, longer is not an aptamer
 
@@ -91,7 +101,7 @@ class Parent:
         return len(set(self.papers))
 
 
-def _run(args: list[str]) -> tuple[str, str, int]:
+def _run(args: list[str], timeout: int | None = None) -> tuple[str, str, int]:
     """(stdout, stderr, returncode) — all three, deliberately.
 
     An earlier version returned stdout alone. A failing subprocess then looked
@@ -103,10 +113,35 @@ def _run(args: list[str]) -> tuple[str, str, int]:
     """
     try:
         proc = subprocess.run(["paperclip", *args], capture_output=True,
-                              text=True, timeout=TIMEOUT)
+                              text=True, timeout=timeout or TIMEOUT)
     except subprocess.TimeoutExpired:
-        return "", f"paperclip {args[0]} exceeded {TIMEOUT}s", 124
+        return "", f"paperclip {args[0]} exceeded {timeout or TIMEOUT}s", 124
     return proc.stdout, proc.stderr, proc.returncode
+
+
+def map_healthy(force: bool = False) -> bool:
+    """Is the reader answering? Probed cheaply, and the answer cached.
+
+    One paper, a trivial question, and a timeout shorter than the reader's own
+    stall. Retrying a dead service is only worth doing if finding out is cheap;
+    the expensive mistake is discovering it fifty documents in.
+    """
+    now = time.monotonic()
+    if not force and now - float(_map_health["checked_at"]) < MAP_HEALTH_TTL:
+        return bool(_map_health["ok"])
+
+    probe, _, rc = _run(["search", "-s", "pmc", "-n", "1", "aptamer"],
+                        timeout=MAP_PROBE_TIMEOUT)
+    rid = _results_id(probe)
+    ok = False
+    if rc == 0 and rid:
+        out, _, rc2 = _run(["map", "--from", rid, "-n", "1", "Title?"],
+                           timeout=MAP_PROBE_TIMEOUT)
+        # A tick means a paper was actually read; "Map complete: 0/1" is a
+        # failure that still exits zero, so the return code alone is not enough.
+        ok = rc2 == 0 and "\u2713 " in out
+    _map_health.update({"ok": ok, "checked_at": now})
+    return ok
 
 
 def _results_id(text: str) -> str | None:
@@ -283,6 +318,18 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
                           "target before designing from it.",
                 "parents": [_as_dict(p) for p in parents[:TOP_N]]}
 
+    # Deterministic extraction found nothing. Only now is the reader worth
+    # trying, and only if it is actually answering.
+    if not map_healthy():
+        return {"target": target, "searched_as": variants, "n_papers": n_papers,
+                "papers_read": len(covered) + probed - failed,
+                "papers_failed": failed, "parents": [], "search_failed": True,
+                "reader_available": False,
+                "note": (f"no sequence was extractable from {n_papers} matched "
+                         f"papers, and the literature reader is not responding, "
+                         f"so the fallback could not run either. This is NOT "
+                         f"evidence that no aptamer exists for {target}.")}
+
     map_out, map_err, map_rc = _run([
         # Read every matched paper, not a prefix of them. The grep result is
         # ordered by document id, not by which papers actually print a
@@ -388,10 +435,35 @@ def _as_dict(p: Parent) -> dict:
     }
 
 
+def watch_reader(interval: int = 180, tries: int = 40) -> bool:
+    """Poll until the reader recovers, printing one line per probe.
+
+    Paperclip's own suggestion when their reader is down. Kept out of the design
+    path deliberately: extraction does not need it, so this exists to tell you
+    when the enrichment layer is worth using again, not to gate anything on it.
+    """
+    for i in range(1, tries + 1):
+        if map_healthy(force=True):
+            print(f"probe {i}: reader RECOVERED", flush=True)
+            return True
+        print(f"probe {i}: reader still down, retrying in {interval}s", flush=True)
+        time.sleep(interval)
+    print(f"reader still down after {tries} probes", flush=True)
+    return False
+
+
 if __name__ == "__main__":
     import json
     import sys
 
-    target = sys.argv[1] if len(sys.argv) > 1 else "TNF-alpha"
+    if "--watch" in sys.argv:
+        sys.exit(0 if watch_reader() else 1)
+    if "--status" in sys.argv:
+        ok = map_healthy(force=True)
+        print(f"paperclip reader (map): {'responding' if ok else 'NOT responding'}")
+        print("extraction does not depend on it; deterministic regex is primary.")
+        sys.exit(0 if ok else 1)
+
+    target = next((a for a in sys.argv[1:] if not a.startswith("-")), "TNF-alpha")
     result = find_parents(target)
     print(json.dumps(result, indent=2)[:3000])
