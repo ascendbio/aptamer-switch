@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -32,7 +33,9 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     TextBlock,
+    ToolResultBlock,
     ToolUseBlock,
+    UserMessage,
     create_sdk_mcp_server,
     query,
     tool,
@@ -195,6 +198,47 @@ LABELS = {
 }
 
 
+def _summarise(payload: str) -> str:
+    """One line saying what a tool actually returned.
+
+    The trace is the demo, and a trace that only records what was *called* is
+    half a trace: the interesting content is in the answers. Design decisions
+    the agent makes downstream — which parent to take, whether to build a plate
+    at all — are only legible if the reader can see what came back.
+    """
+    try:
+        d = json.loads(payload)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(d, dict):
+        return ""
+
+    if "parents" in d:
+        n = len(d["parents"])
+        if not n:
+            return f"no published sequence found across {d.get('n_papers', 0)} papers"
+        best = d["parents"][0]
+        return (f"{n} parent{'s' if n != 1 else ''} from {d.get('n_papers', 0)} papers · "
+                f"best {best['length']} nt {best['chemistry']}"
+                + (f", Kd {best['reported_kd'][0]}" if best.get("reported_kd") else "")
+                + f", {best['corroborating_papers']} paper(s)")
+
+    if "opening_energy_trustworthy" in d:
+        kind = "G-quadruplex" if d["core_is_quadruplex"] else "Watson-Crick"
+        trust = "modellable" if d["opening_energy_trustworthy"] else "opening energy NOT reliable"
+        return f"{kind} fold, MFE {d['mfe']} kcal/mol · {trust}"
+
+    if "library_size" in d:
+        if not d.get("wells"):
+            blockers = ", ".join(d.get("universal_blockers", [])) or "no candidate passed"
+            return f"{d['library_size']:,} candidates, 0 usable — {blockers}"
+        lo, hi = d["kd_apparent_nM_range"]
+        return (f"{d['library_size']:,} → {d['in_switching_window']:,} in window → "
+                f"{d['passing_all_criteria']:,} pass → {d['test_wells']} wells · "
+                f"Kd_app {lo:.0f}-{hi:.0f} nM")
+    return ""
+
+
 def _options() -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         model=MODEL,
@@ -209,28 +253,52 @@ def _options() -> ClaudeAgentOptions:
 
 
 async def analyse(target: str) -> AsyncIterator[tuple[str, str]]:
-    """Yield ("tool"|"text", content) as the agent works."""
+    """Yield ("tool"|"result"|"text", content) as the agent works."""
     prompt = (f"Design a 96-well plate of aptamer switch candidates for a "
               f"continuous E-AB biosensor against {target}.")
+    started: dict[str, float] = {}
+
     async for message in query(prompt=prompt, options=_options()):
-        if not isinstance(message, AssistantMessage):
-            continue
-        for block in message.content:
-            if isinstance(block, ToolUseBlock):
-                short = block.name.split("__")[-1]
-                arg = ""
-                if isinstance(block.input, dict):
-                    arg = block.input.get("target") or block.input.get("sequence", "")[:24]
-                label = LABELS.get(short, short)
-                yield "tool", f"{label} — {arg}" if arg else label
-            elif isinstance(block, TextBlock) and block.text.strip():
-                yield "text", block.text
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, ToolUseBlock):
+                    short = block.name.split("__")[-1]
+                    started[block.id] = time.monotonic()
+                    arg = ""
+                    if isinstance(block.input, dict):
+                        arg = (block.input.get("target")
+                               or block.input.get("sequence", "")[:24])
+                    label = LABELS.get(short, short)
+                    yield "tool", f"{label} — {arg}" if arg else label
+                elif isinstance(block, TextBlock) and block.text.strip():
+                    yield "text", block.text
+
+        # Tool results arrive as a UserMessage carrying ToolResultBlocks. Without
+        # reading these the trace shows only intent, never outcome.
+        elif isinstance(message, UserMessage):
+            for block in getattr(message, "content", []) or []:
+                if not isinstance(block, ToolResultBlock):
+                    continue
+                payload = block.content
+                if isinstance(payload, list):
+                    payload = "".join(p.get("text", "") for p in payload
+                                      if isinstance(p, dict))
+                summary = _summarise(payload or "")
+                elapsed = time.monotonic() - started.get(block.tool_use_id, 0)
+                if summary:
+                    took = f"  [{elapsed:.0f}s]" if elapsed and elapsed < 3600 else ""
+                    yield "result", summary + took
 
 
 async def _main() -> None:
     target = sys.argv[1] if len(sys.argv) > 1 else "IL-6"
     async for kind, content in analyse(target):
-        print(f"\n  ▶ {content}" if kind == "tool" else f"\n{content}", flush=True)
+        if kind == "tool":
+            print(f"\n  ▶ {content}", flush=True)
+        elif kind == "result":
+            print(f"      └ {content}", flush=True)
+        else:
+            print(f"\n{content}", flush=True)
 
 
 if __name__ == "__main__":

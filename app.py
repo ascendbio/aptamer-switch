@@ -75,6 +75,10 @@ async def respond(target: str, history: list):
         async for kind, content in analyse(target):
             if kind == "tool":
                 trace.append(f"▸ {content}")
+            elif kind == "result":
+                # Indented under the call it answers, so the transcript reads as
+                # action then outcome rather than a flat list of intentions.
+                trace.append(f"\u2003 └ {content}")
             else:
                 memo += content
             body = "\n".join(f"`{line}`" for line in trace)
