@@ -464,7 +464,7 @@ with gr.Blocks(title="Aptamer switch design") as demo:
             # After the order file, because that is where the cycle returns: you
             # synthesise the plate, run it, and bring the numbers back. Putting
             # this first asked for results from a plate that did not exist yet.
-            with gr.Accordion("Have results from a previous round? Feed them back",
+            with gr.Accordion("Providing feedback from wet lab experiment",
                               open=False):
                 gr.Markdown(
                     "<sub>A CSV with a well column and a signal column — any "
