@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 from pathlib import Path
 
 import gradio as gr
@@ -65,6 +66,9 @@ def _figures(target: str) -> tuple:
 
 BLANK = (None, None, None, None, None)
 
+# How often the page refreshes while a tool is still running.
+TICK_SECONDS = 1.0
+
 
 async def respond(target: str, history: list):
     target = (target or "").strip()
@@ -78,25 +82,71 @@ async def respond(target: str, history: list):
     history.append({"role": "assistant", "content": "_Working…_"})
     yield history, "", *BLANK
 
+    # The agent is consumed through a queue rather than iterated directly, so the
+    # page can keep updating while a tool is still running. A literature search
+    # takes ~30s and a design pass ~32s; iterating the stream directly means the
+    # transcript freezes for that whole time on the line that started the call,
+    # which is indistinguishable from a hang.
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def pump() -> None:
+        try:
+            async for item in analyse(target):
+                await queue.put(item)
+        except Exception as exc:               # forwarded, not swallowed
+            await queue.put(("error", str(exc)))
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(pump())
+    started = time.monotonic()
+    figures = BLANK
+
+    def render(tick: str = "") -> str:
+        body = "\n".join(f"`{line}`" for line in trace)
+        if tick:
+            body += f"\n`{tick}`" if body else f"`{tick}`"
+        if memo:
+            body += "\n\n---\n\n" + memo
+        return body or "_Working…_"
+
     try:
-        async for kind, content in analyse(target):
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=TICK_SECONDS)
+            except asyncio.TimeoutError:
+                # Nothing new from the agent: refresh the elapsed counter so the
+                # page visibly keeps time while the tool works.
+                waited = time.monotonic() - started
+                history[-1] = {"role": "assistant",
+                               "content": render(f"   … working, {waited:.0f}s")}
+                yield history, "", *figures
+                continue
+
+            if item is None:
+                break
+            kind, content = item
+            if kind == "error":
+                raise RuntimeError(content)
             if kind == "tool":
                 trace.append(f"▸ {content}")
+                started = time.monotonic()
             elif kind == "result":
                 # Indented under the call it answers, so the transcript reads as
                 # action then outcome rather than a flat list of intentions.
                 trace.append(f"\u2003 └ {content}")
+                started = time.monotonic()
             else:
                 memo += content
-            body = "\n".join(f"`{line}`" for line in trace)
-            if memo:
-                body += "\n\n---\n\n" + memo
-            history[-1] = {"role": "assistant", "content": body or "_Working…_"}
+
+            history[-1] = {"role": "assistant", "content": render()}
             # Figures appear as soon as the design tool has written them, which
             # is mid-run — the reader gets the plate while the memo is still
             # being written.
-            yield history, "", *await asyncio.to_thread(_figures, target)
+            figures = await asyncio.to_thread(_figures, target)
+            yield history, "", *figures
     except Exception as exc:
+        task.cancel()
         history[-1] = {"role": "assistant",
                        "content": f"{chr(10).join(trace)}\n\n**Failed:** `{exc}`"}
         yield history, "", *BLANK

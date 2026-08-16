@@ -23,6 +23,8 @@ CLI:  python agent.py "IL-6"
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -50,6 +52,10 @@ import thermo  # noqa: E402
 MODEL = "claude-opus-5"
 SERVER = "aptamer"
 OUT = Path(__file__).parent / "out"
+# Interpreter that has proto-tools; overridable so this is not tied to one machine.
+PROTO_PY = Path(os.environ.get(
+    "PROTO_PY", Path.home() / "Documents" / "AscendBiosci" / "proto-sandbox"
+    / "venv" / "bin" / "python"))
 
 SYSTEM = """You design aptamer switches for continuous electrochemical biosensors \
 (E-AB). Your reader runs the wet lab and will synthesise what you recommend.
@@ -66,6 +72,10 @@ worth synthesising.
 papers report the same sequence.
 - The funnel: library size, how many survived each criterion, what killed the rest.
 - The single biggest risk, named plainly.
+
+After building a plate, validate it with the independent engine and report
+whether the two agree. A plate filtered on a dimer criterion that only one
+engine supports is not ready to synthesise.
 
 Three things to be precise about, because they are where this analysis goes wrong.
 
@@ -219,13 +229,49 @@ async def design_plate(args: dict) -> dict:
     })
 
 
-TOOLS = [find_parents, assess_parent, design_plate]
+@tool(
+    "validate_plate",
+    "Independently re-score the finished plate with Primer3, which computes "
+    "hairpin and homodimer free energy from the SantaLucia parameters rather "
+    "than ViennaRNA's. Reports rank correlation between the two engines and any "
+    "wells where they disagree about whether a design is sticky. Call after "
+    "design_plate. Runs locally on CPU and costs nothing. Agreement corroborates "
+    "the dimer scoring the plate was filtered on; disagreement means one engine "
+    "is wrong and the plate should not be ordered until it is known which.",
+    {"plate_csv": str},
+)
+async def validate_plate(args: dict) -> dict:
+    path = (args.get("plate_csv") or "").strip()
+    csv_path = Path(path) if path else (OUT / "IL-6_plate.csv")
+    if not csv_path.exists():
+        return _ok({"error": f"no plate at {csv_path}; run design_plate first"})
+
+    # Primer3 lives in the proto-tools environment, which carries torch, rdkit
+    # and a pinned numba. Shelling out keeps that out of the agent's venv - the
+    # collision that broke the MCP server earlier came from merging exactly this
+    # kind of dependency tree.
+    proc = await anyio.to_thread.run_sync(
+        lambda: subprocess.run([str(PROTO_PY), str(Path(__file__).parent / "sources"
+                                                  / "crosscheck.py"), str(csv_path)],
+                               capture_output=True, text=True, timeout=900))
+    if proc.returncode != 0:
+        return _ok({"error": f"cross-check failed: {proc.stderr.strip()[-300:]}"})
+    try:
+        payload = json.loads(proc.stdout[proc.stdout.index("{"):])
+    except (ValueError, json.JSONDecodeError):
+        return _ok({"error": "cross-check produced no parsable result"})
+    payload["engines"] = "ViennaRNA (Mathews 2004) vs Primer3 (SantaLucia)"
+    return _ok(payload)
+
+
+TOOLS = [find_parents, assess_parent, design_plate, validate_plate]
 TOOL_NAMES = [f"mcp__{SERVER}__{t.name}" for t in TOOLS]
 
 LABELS = {
     "find_parents": "Searching the literature for published aptamers",
     "assess_parent": "Folding the parent aptamer",
     "design_plate": "Designing, scoring and laying out the plate",
+    "validate_plate": "Re-scoring the plate with an independent engine",
 }
 
 
@@ -273,6 +319,12 @@ def _summarise(payload: str) -> str:
         kind = "G-quadruplex" if d["core_is_quadruplex"] else "Watson-Crick"
         trust = "modellable" if d["opening_energy_trustworthy"] else "opening energy NOT reliable"
         return f"{kind} fold, MFE {d['mfe']} kcal/mol · {trust}"
+
+    if "homodimer" in d and "wells_compared" in d:
+        hd = d["homodimer"]
+        return (f"{d['wells_compared']} wells re-scored · homodimer rank "
+                f"correlation {hd['spearman']} between ViennaRNA and Primer3 · "
+                f"{d.get('n_disagreements', 0)} disagree on stickiness")
 
     if "library_size" in d:
         if not d.get("wells"):
