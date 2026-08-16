@@ -23,7 +23,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from agent import analyse
+from agent import LABELS as TOOL_LABELS, analyse
 
 sys.path.insert(0, str(Path(__file__).parent / "sources"))
 import feedback  # noqa: E402
@@ -345,6 +345,28 @@ TICK_SECONDS = 1.0
 # for all of them.
 CONCURRENT_RUNS = 4
 
+# What the button says while each tool runs. The plate CSV appears the moment
+# design_plate finishes, but the agent keeps going for another two minutes -
+# cross-checking, testing the core assumption, building the hedged plate - and a
+# button still reading "Working on design…" over a finished plate looks stuck.
+# Naming the current step keeps it true, and shows that what follows the plate is
+# the part that decides whether the plate is worth ordering.
+BUSY_LABEL = {
+    TOOL_LABELS["find_parents"]: "Searching literature…",
+    TOOL_LABELS["assess_parent"]: "Folding parent…",
+    TOOL_LABELS["design_plate"]: "Designing plate…",
+    TOOL_LABELS["validate_plate"]: "Cross-checking…",
+    TOOL_LABELS["test_core_sensitivity"]: "Testing assumption…",
+    TOOL_LABELS["build_hedged_plate"]: "Hedging plate…",
+    TOOL_LABELS["learn_from_results"]: "Reading results…",
+    TOOL_LABELS["read_ledger"]: "Reading ledger…",
+}
+
+
+def _busy_update(label: str):
+    return gr.update(value=label, interactive=False)
+
+
 
 async def respond(target: str, history: list, session: str,
                   results_file: str | None = None):
@@ -396,7 +418,8 @@ async def respond(target: str, history: list, session: str,
                "**Searching the literature** for published aptamers against "
                f"{target}. This takes a few minutes end to end.")
     history.append({"role": "assistant", "content": opening})
-    yield history, "", *_panels(BLANK)
+    busy = "Working on redesign…" if results_path else "Working on design…"
+    yield history, "", _busy_update(busy), *_panels(BLANK)
 
     # The agent is consumed through a queue rather than iterated directly, so the
     # page can keep updating while a tool is still running. A literature search
@@ -454,7 +477,7 @@ async def respond(target: str, history: list, session: str,
                         f"▸ Starting up — loading tools and reading the "
                         f"brief, {waited}s")
                 history[-1] = {"role": "assistant", "content": render(tick)}
-                yield history, "", *_panels(figures)
+                yield history, "", _busy_update(busy), *_panels(figures)
                 continue
 
             if item is None:
@@ -464,6 +487,7 @@ async def respond(target: str, history: list, session: str,
                 raise RuntimeError(content)
             if kind == "tool":
                 trace.append(f"▸ {content}")
+                busy = BUSY_LABEL.get(content.split(" — ")[0], busy)
                 started = time.monotonic()
             elif kind == "result":
                 # Indented under the call it answers, so the transcript reads as
@@ -478,19 +502,20 @@ async def respond(target: str, history: list, session: str,
             # is mid-run — the reader gets the plate while the memo is still
             # being written.
             figures = await asyncio.to_thread(_figures, target, run_began)
-            yield history, "", *_panels(figures)
+            yield history, "", _busy_update(busy), *_panels(figures)
     except Exception as exc:
         task.cancel()
         history[-1] = {"role": "assistant",
                        "content": f"{chr(10).join(trace)}\n\n**Failed:** `{exc}`"}
-        yield history, "", *_panels(BLANK)
+        yield history, "", gr.update(), *_panels(BLANK)
         return
 
     # Persist the memo and trace. design_plate already archived the numbers, but
     # the agent's written reasoning lived only in this browser tab until now —
     # and the reasoning is the part that explains why the numbers were accepted.
     await asyncio.to_thread(_archive, target, memo, trace)
-    yield history, "", *_panels(await asyncio.to_thread(_figures, target, run_began))
+    yield history, "", gr.update(), *_panels(
+        await asyncio.to_thread(_figures, target, run_began))
 
 
 def _target_from_plate(out_dir: Path) -> str:
@@ -681,7 +706,7 @@ with gr.Blocks(title="Aptamer switch design") as demo:
     for trigger in (box.submit, send.click):
         (trigger(_busy, results_upload, send)
          .then(respond, [box, chat, session, results_upload],
-               [chat, box, *outputs], concurrency_limit=CONCURRENT_RUNS)
+               [chat, box, send, *outputs], concurrency_limit=CONCURRENT_RUNS)
          .then(_idle, results_upload, send))
 
 
