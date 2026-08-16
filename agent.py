@@ -51,6 +51,7 @@ import ledger  # noqa: E402
 import plate  # noqa: E402
 import sensitivity  # noqa: E402
 import store  # noqa: E402
+import workspace  # noqa: E402
 
 REJECTED_COUNT = ledger.REJECTED
 import literature  # noqa: E402
@@ -212,7 +213,7 @@ async def design_plate(args: dict) -> dict:
                              "omitted rather than estimated."})
     result = design.run(seq, (start, end), kd_M, target=args["target"],
                         kd_source=kd_source)
-    art = design.artifacts(result, OUT)
+    art = design.artifacts(result, workspace.current())
 
     if not result["selected"]:
         return _ok({
@@ -267,7 +268,7 @@ async def design_plate(args: dict) -> dict:
 )
 async def validate_plate(args: dict) -> dict:
     path = (args.get("plate_csv") or "").strip()
-    csv_path = Path(path) if path else (OUT / "IL-6_plate.csv")
+    csv_path = Path(path) if path else (workspace.current() / "IL-6_plate.csv")
     if not csv_path.exists():
         return _ok({"error": f"no plate at {csv_path}; run design_plate first"})
 
@@ -345,9 +346,9 @@ async def build_hedged_plate(args: dict) -> dict:
     if result.get("error"):
         return _ok({"error": result["error"]})
 
-    OUT.mkdir(exist_ok=True)
+    out_dir = workspace.current()
     safe = (args.get("target") or "target").replace("/", "_")
-    csv_path = plate.write_order(result["wells"], OUT / f"{safe}_hedged_plate.csv")
+    csv_path = plate.write_order(result["wells"], out_dir / f"{safe}_hedged_plate.csv")
     return _ok({
         "target": result["target"],
         "wells": len(result["wells"]),
@@ -372,7 +373,7 @@ async def build_hedged_plate(args: dict) -> dict:
     {},
 )
 async def read_ledger(args: dict) -> dict:
-    latest = store.latest_run(OUT)
+    latest = store.latest_run(workspace.current())
     if latest is None:
         return _ok({"error": "no run archived yet; design a plate first"})
     return _ok({

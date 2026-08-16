@@ -17,6 +17,7 @@ import asyncio
 import json
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import gradio as gr
@@ -26,6 +27,7 @@ from agent import analyse
 sys.path.insert(0, str(Path(__file__).parent / "sources"))
 import ledger  # noqa: E402
 import store  # noqa: E402
+import workspace  # noqa: E402
 
 OUT = Path(__file__).parent / "out"
 OUT.mkdir(exist_ok=True)
@@ -168,8 +170,10 @@ def _figures(target: str, since: float = 0.0) -> tuple:
 
     `since` is the moment this run began, so only files it actually wrote qualify.
     """
+    out_dir = workspace.current()
+
     def newest(pattern: str) -> str | None:
-        hits = [p for p in OUT.glob(pattern) if p.stat().st_mtime >= since]
+        hits = [p for p in out_dir.glob(pattern) if p.stat().st_mtime >= since]
         return str(max(hits, key=lambda p: p.stat().st_mtime)) if hits else None
 
     return (newest("*_switch.png"), newest("*_funnel.png"), newest("*_dose.png"),
@@ -200,7 +204,7 @@ def _panels(figs: tuple):
     insurance against the same mistake.
     """
     switch, funnel, dose, window, plate, csv, gallery_items, table = figs
-    latest = store.latest_run(OUT)
+    latest = store.latest_run(workspace.current())
     text = ledger.build(latest / "manifest.json") if latest and table else ""
 
     values = (
@@ -235,7 +239,7 @@ def _comparison(since: float) -> list[list]:
     Read from the archived manifests rather than recomputed, so the table cannot
     drift from the plate it describes.
     """
-    runs = OUT / "runs"
+    runs = workspace.current() / "runs"
     if not runs.exists():
         return []
 
@@ -286,7 +290,7 @@ def _gallery(since: float) -> list[tuple[str, str]]:
     them is the entire point of running more than one.
     """
     found: dict[str, dict[str, str]] = {}
-    for path in OUT.glob("*_*.png"):
+    for path in workspace.current().glob("*_*.png"):
         if path.stat().st_mtime < since:
             continue
         stem, _, kind = path.stem.rpartition("_")
@@ -304,8 +308,18 @@ def _gallery(since: float) -> list[tuple[str, str]]:
 # How often the page refreshes while a tool is still running.
 TICK_SECONDS = 1.0
 
+# Simultaneous runs. Each one is a Claude session plus a literature search on the
+# host's account, and Paperclip already rate-limits us, so this is deliberately
+# small: four people can demo at once, forty would take the corpus search down
+# for all of them.
+CONCURRENT_RUNS = 4
 
-async def respond(target: str, history: list):
+
+async def respond(target: str, history: list, session: str):
+    # Each browser session writes to its own directory. Without this two people
+    # running at once overwrite each other's figures and the newest-file lookup
+    # hands one of them the other's plate.
+    OUT_DIR = workspace.use(session)
     target = (target or "").strip()
     if not target:
         yield history, "", *_panels(BLANK)
@@ -326,6 +340,10 @@ async def respond(target: str, history: list):
 
     async def pump() -> None:
         try:
+            # The workspace is a context variable, so it has to be set inside
+            # this task too - a new task does not inherit the caller's context
+            # automatically once it is created by create_task.
+            workspace.use(session)
             async for item in analyse(target):
                 await queue.put(item)
         except Exception as exc:               # forwarded, not swallowed
@@ -399,13 +417,17 @@ def _archive(target: str, memo: str, trace: list[str]) -> None:
     """Write the memo into this target's run directory, or a new one if the
     design tool never got far enough to create one."""
     try:
-        run_dir = store.latest(OUT, target) or store.new_run(OUT, target)
+        base = workspace.current()
+        run_dir = store.latest(base, target) or store.new_run(base, target)
         store.save_memo(run_dir, target, memo, trace)
     except Exception:
         pass          # a failed archive must never lose the user their answer
 
 
 with gr.Blocks(title="Aptamer switch design") as demo:
+    # One id per browser session, so concurrent users never share an output
+    # directory. gr.State is per-connection by construction.
+    session = gr.State(lambda: uuid.uuid4().hex[:12])
     gr.Markdown(INTRO)
     with gr.Row():
         with gr.Column(scale=3):
@@ -499,7 +521,8 @@ with gr.Blocks(title="Aptamer switch design") as demo:
     assert len(outputs) == len(OUTPUT_ORDER), "outputs drifted from OUTPUT_ORDER"
 
     for trigger in (box.submit, send.click):
-        trigger(respond, [box, chat], [chat, box, *outputs])
+        trigger(respond, [box, chat, session], [chat, box, *outputs],
+                concurrency_limit=CONCURRENT_RUNS)
 
 
 if __name__ == "__main__":

@@ -66,6 +66,13 @@ teammate's run spends your quota rather than theirs. The link is therefore
 always password protected — `gradio.live` URLs are open to anyone holding them
 and live for 72 hours. `APTAMER_PASSWORD` sets the password.
 
+Up to four people can run at once. Each browser session gets its own output
+directory under `out/sessions/`, so concurrent runs cannot overwrite each
+other's figures — without that, the newest-file lookup hands one user another
+user's plate. The limit is deliberately small: every run is a Claude session and
+a literature search on the host's account, and Paperclip rate-limits well before
+the laptop runs out of CPU.
+
 For a teammate who wants their own quota, cloning the repo and running locally
 is better: the design pipeline needs nothing but `requirements.txt`, and the
 agent uses whatever Claude session is on their machine.
