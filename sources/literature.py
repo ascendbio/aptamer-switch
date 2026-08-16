@@ -35,6 +35,8 @@ import json
 import re
 import subprocess
 import time
+
+import requests
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -145,9 +147,100 @@ def map_healthy(force: bool = False) -> bool:
     return ok
 
 
+# paperclip prints its own failures to stdout and still exits 0: a corpus grep
+# that dies reports "ERR: ... corpus search error ... [exit 2]" through a
+# successful process. Trusting the return code turns that into "no papers
+# matched", which is a scientific claim manufactured from a broken query.
+_ERR_RE = re.compile(r"^\s*ERR:|corpus search error|\[exit [1-9]", re.M)
+
+
+def _failed(stdout: str) -> str:
+    m = _ERR_RE.search(stdout or "")
+    return stdout[m.start():m.start() + 160].strip() if m else ""
+
+
 def _results_id(text: str) -> str | None:
     m = re.search(r"results_id:\s*(\w+)", text)
     return m.group(1) if m else None
+
+
+UNIPROT = "https://rest.uniprot.org/uniprotkb/search"
+_synonym_cache: dict[str, list[str]] = {}
+
+# Short tokens collide across proteins - HGF is hepatocyte growth factor to most
+# readers, whatever else it may abbreviate - so curated names are taken whole and
+# no abbreviation is invented from them.
+MIN_SYNONYM_LEN = 4
+# Long multi-word names bloat the alternation, and the corpus engine fails on an
+# over-large boolean pattern - reporting the failure as zero matches. Names above
+# this length are dropped; the short specific ones (Cachectin, IFNB2) carry the
+# recall benefit anyway.
+MAX_SYNONYM_LEN = 26
+MAX_VARIANTS = 8
+
+
+def _gene_candidates(target: str) -> list[str]:
+    """Plausible gene symbols for a typed target, most specific first.
+
+    Stripping punctuation is not enough: "TNF-alpha" becomes "TNFalpha", which is
+    not a symbol and returns nothing, so the curated synonyms - including
+    cachectin - were silently missed for exactly the target that needed them.
+    The Greek-letter suffix has to come off as well.
+    """
+    t = target.strip()
+    out = [re.sub(r"[^A-Za-z0-9]", "", t)]
+    m = re.match(r"^(.*?)[-_ ]?(alpha|beta|gamma|delta|a|b|\u03b1|\u03b2|\u03b3)$", t, re.I)
+    if m and len(m.group(1)) >= 2:
+        out.append(re.sub(r"[^A-Za-z0-9]", "", m.group(1)))
+    return [x for x in dict.fromkeys(out) if x]
+
+
+def uniprot_synonyms(target: str) -> list[str]:
+    """Curated gene and protein synonyms for a human target, from UniProt.
+
+    Hand-written orthographic rules cover IL-6 / IL6 / interleukin-6 but not what
+    a 2008 paper actually called the protein. UniProt lists cachectin for TNF,
+    IFNB2 and B-cell stimulatory factor 2 for IL-6, and cytokine synthesis
+    inhibitory factor for IL-10 — names an aptamer paper may use throughout
+    without ever writing the modern one.
+    """
+    key = target.upper()
+    if key in _synonym_cache:
+        return _synonym_cache[key]
+
+    out: list[str] = []
+    for gene in _gene_candidates(target):
+        if out:
+            break
+        try:
+            r = requests.get(UNIPROT, params={
+                "query": f"gene:{gene} AND organism_id:9606 AND reviewed:true",
+                "fields": "gene_names,protein_name", "format": "json", "size": 5,
+            }, timeout=20)
+            r.raise_for_status()
+            hits = r.json().get("results", [])
+        except (requests.RequestException, ValueError, KeyError):
+            continue                          # offline is not an error here
+        for hit in hits:
+            names = []
+            for g in hit.get("genes", []):
+                names.append(g.get("geneName", {}).get("value", ""))
+                names += [x.get("value", "") for x in g.get("synonyms", [])]
+            # Verify by gene name: UniProt ranks loosely, and taking the top hit
+            # would attach another protein's synonyms to this search.
+            if not any(n.upper() == gene.upper() for n in names):
+                continue
+            desc = hit.get("proteinDescription", {})
+            names.append(desc.get("recommendedName", {})
+                         .get("fullName", {}).get("value", ""))
+            names += [a.get("fullName", {}).get("value", "")
+                      for a in desc.get("alternativeNames", [])]
+            out = [n for n in names
+                   if MIN_SYNONYM_LEN <= len(n) <= MAX_SYNONYM_LEN]
+            break
+
+    _synonym_cache[key] = out
+    return out
 
 
 def _name_variants(target: str) -> list[str]:
@@ -176,7 +269,14 @@ def _name_variants(target: str) -> list[str]:
         n = m.group(1)
         out.update({f"IL-{n}", f"IL{n}", f"interleukin-{n}", f"interleukin {n}"})
 
-    return sorted({v.strip() for v in out if len(v.strip()) >= 2}, key=len, reverse=True)
+    # Orthographic forms of the name the user typed come first and are never
+    # dropped: IL-6, IL6 and interleukin-6 are what most papers actually print,
+    # and an earlier cut by descending length discarded exactly those in favour
+    # of "CTL differentiation factor". Curated synonyms fill the remaining slots.
+    primary = sorted({v.strip() for v in out if len(v.strip()) >= 2},
+                     key=len, reverse=True)
+    extra = [n for n in uniprot_synonyms(target) if n not in primary]
+    return (primary + extra)[:MAX_VARIANTS]
 
 
 # 5'-GGTGG... or 5′ GG TGG CAG..., with or without spaces between bases.
@@ -278,12 +378,14 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
              f'AND "5.{{0,3}}-(?:[ACGTUacgtu][ ]?){{15,}}"')
 
     grep_out, grep_err, grep_rc = _run(["grep", "--bool", query, "/papers/"])
-    if grep_rc != 0:
+    printed = _failed(grep_out)
+    if grep_rc != 0 or printed:
         return {"target": target, "searched_as": variants, "n_papers": 0,
                 "parents": [], "search_failed": True,
-                "note": f"literature search failed (exit {grep_rc}): "
-                        f"{grep_err.strip()[:200]}. This is NOT evidence that no "
-                        f"aptamer exists."}
+                "note": f"literature search failed: "
+                        f"{printed or grep_err.strip()[:200]}. This is NOT "
+                        f"evidence that no aptamer exists — the query itself did "
+                        f"not run."}
     rid = _results_id(grep_out)
     n_papers = len(set(GREP_DOC_RE.findall(grep_out)))
     if not rid or not n_papers:
