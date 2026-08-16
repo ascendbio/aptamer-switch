@@ -134,10 +134,40 @@ def _figures(target: str, since: float = 0.0) -> tuple:
         return str(max(hits, key=lambda p: p.stat().st_mtime)) if hits else None
 
     return (newest("*_funnel.png"), newest("*_dose.png"), newest("*_window.png"),
-            newest("*_plate.png"), newest("*_plate.csv"))
+            newest("*_plate.png"), newest("*_plate.csv"), _gallery(since))
 
 
-BLANK = (None, None, None, None, None)
+BLANK = (None, None, None, None, None, [])
+
+KIND_LABEL = {"funnel": "library → plate", "dose": "what the sensor can see",
+              "window": "switching vs specificity", "plate": "the 96-well plate"}
+KIND_ORDER = ["funnel", "window", "dose", "plate"]
+
+
+def _gallery(since: float) -> list[tuple[str, str]]:
+    """Every figure this run produced, grouped by the parent it describes.
+
+    The agent routinely evaluates several parents before recommending one, and
+    each attempt used to overwrite the last panel — so the page showed whichever
+    candidate happened to be assessed most recently, not the one being
+    recommended, and the rejected candidates left no evidence at all. Comparing
+    them is the entire point of running more than one.
+    """
+    found: dict[str, dict[str, str]] = {}
+    for path in OUT.glob("*_*.png"):
+        if path.stat().st_mtime < since:
+            continue
+        stem, _, kind = path.stem.rpartition("_")
+        if kind not in KIND_LABEL or not stem:
+            continue
+        found.setdefault(stem, {})[kind] = str(path)
+
+    items: list[tuple[str, str]] = []
+    for parent in sorted(found):
+        for kind in KIND_ORDER:
+            if kind in found[parent]:
+                items.append((found[parent][kind], f"{parent} · {KIND_LABEL[kind]}"))
+    return items
 
 # How often the page refreshes while a tool is still running.
 TICK_SECONDS = 1.0
@@ -275,11 +305,27 @@ with gr.Blocks(title="Aptamer switch design") as demo:
             plate_img = gr.Image(label="The plate", height=250)
             with gr.Accordion("What am I looking at?", open=False):
                 gr.Markdown(EXPLAIN["plate"])
+
+    # Every candidate the agent assessed, not only the one it settled on. A
+    # rejected parent's funnel is often the more informative figure: it shows
+    # which criterion removed the whole library and therefore why that candidate
+    # could not work, which is what makes the recommendation checkable.
+    with gr.Accordion("Every parent evaluated in this run — click any figure to "
+                      "enlarge", open=False):
+        gr.Markdown(
+            "The agent usually assesses several published parents before "
+            "recommending one. Captions name the parent; each has up to four "
+            "figures. A parent showing only a funnel and a window plot produced "
+            "**no usable plate** — read its funnel to see which criterion "
+            "eliminated the whole library.")
+        gallery = gr.Gallery(label=None, columns=2, height=520,
+                             allow_preview=True, object_fit="contain")
     gr.Markdown(FOOTER)
 
     for trigger in (box.submit, send.click):
         trigger(respond, [box, chat],
-                [chat, box, funnel_img, dose_img, window_img, plate_img, order])
+                [chat, box, funnel_img, dose_img, window_img, plate_img, order,
+                 gallery])
 
 
 if __name__ == "__main__":
