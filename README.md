@@ -138,6 +138,33 @@ commit — in `out/runs/<target>_<timestamp>/manifest.json`, so any plate can be
 regenerated exactly by feeding those values back to `design.run()`, without the
 agent in the loop.
 
+## Closing the loop with wet-lab results
+
+The plate is one round of a design-build-test-learn cycle, and the learn step is
+where prediction stops mattering. Hand the bench's results back:
+
+```bash
+./run "IL-6 — here are the results from out/my_results.csv"
+```
+
+The results file needs a well column and a signal column; any header wording
+works, and everything else is taken from the plate that was designed.
+
+What it reports, and what it refuses to report:
+
+* **whether ddG actually predicted signal** — tested against a 2,000-permutation
+  null. On pure noise it says so rather than finding a story: recentring the next
+  window on an artefact would spend a second synthesis run confirming the first
+  one's mistake.
+* **which core hypothesis responded** — the hedged plate exists to settle this,
+  and a hypothesis with no responsive well is eliminated. That is the epitope
+  answer, from a plate that was going to be synthesised anyway.
+* **where the optimum actually sits**, so the next window is centred on a
+  measurement rather than a model.
+
+`sources/feedback.py` can generate a clearly-labelled synthetic results file if
+you want to try the loop before real data exists.
+
 ## Known limitations — read before trusting output
 
 **The binding core is an assumption.** No paper maps where these cytokines

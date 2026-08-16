@@ -46,6 +46,7 @@ from claude_agent_sdk import (
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent / "sources"))
 import design  # noqa: E402
+import feedback  # noqa: E402
 import hedged  # noqa: E402
 import ledger  # noqa: E402
 import plate  # noqa: E402
@@ -81,6 +82,11 @@ Required sequence once a plate exists. Do all four before writing anything:
                                it is the whole point: it converts "do not order"
                                into a plate the lab can actually synthesise.
   4. read_ledger             — what the design rests on
+
+If the user supplies wet-lab results, call learn_from_results FIRST and let it
+govern the memo. It is the only tool that reports a measured number rather than
+a predicted one: where it disagrees with the design, the measurement wins and
+you should say so plainly.
 
 Skipping step 3 after a failed sensitivity test leaves the reader with a
 diagnosis and no deliverable, which is the one outcome this tool exists to avoid.
@@ -364,6 +370,46 @@ async def build_hedged_plate(args: dict) -> dict:
 
 
 @tool(
+    "learn_from_results",
+    "Read wet-lab measurements from a finished plate and say what they support. "
+    "Takes the results CSV the bench produced — a well column and a signal "
+    "column, any header wording — and joins it to the plate that was designed. "
+    "Reports whether ddG actually predicted signal (tested against a permutation "
+    "null, not asserted), which core hypothesis responded, where the measured "
+    "optimum sits, and what the next round should be built around. This is the "
+    "only tool that sees a measured number rather than a predicted one, so its "
+    "answer outranks anything upstream of it.",
+    {"results_csv": str, "plate_csv": str},
+)
+async def learn_from_results(args: dict) -> dict:
+    out_dir = workspace.current()
+    results = Path((args.get("results_csv") or "").strip())
+    if not results.exists():
+        return _ok({"error": f"no results file at {results}"})
+
+    plate_path = (args.get("plate_csv") or "").strip()
+    if plate_path:
+        designed = Path(plate_path)
+    else:
+        # Default to the hedged plate when one exists: it is the plate built to
+        # be read this way, and reading the single-core plate instead would
+        # discard the hypothesis comparison the wells were spent on.
+        candidates = sorted(out_dir.glob("*_hedged_plate.csv")) or \
+            sorted(out_dir.glob("*_plate.csv"))
+        if not candidates:
+            return _ok({"error": "no plate found to join the results against"})
+        designed = max(candidates, key=lambda p: p.stat().st_mtime)
+
+    joined = await anyio.to_thread.run_sync(lambda: feedback.load(designed, results))
+    if not joined:
+        return _ok({"error": f"no wells matched between {results.name} and "
+                             f"{designed.name}; check the well column"})
+    report = await anyio.to_thread.run_sync(lambda: feedback.analyse(joined))
+    report["plate_read"] = designed.name
+    return _ok(report)
+
+
+@tool(
     "read_ledger",
     "Return what the most recent plate rests on: which numbers were measured, "
     "which are chosen thresholds with their values, and which external models "
@@ -383,7 +429,8 @@ async def read_ledger(args: dict) -> dict:
 
 
 TOOLS = [find_parents, assess_parent, design_plate, validate_plate,
-         test_core_sensitivity, build_hedged_plate, read_ledger]
+         test_core_sensitivity, build_hedged_plate, learn_from_results,
+         read_ledger]
 TOOL_NAMES = [f"mcp__{SERVER}__{t.name}" for t in TOOLS]
 
 LABELS = {
@@ -393,6 +440,7 @@ LABELS = {
     "validate_plate": "Re-scoring the plate with an independent engine",
     "test_core_sensitivity": "Testing the plate against the core assumption",
     "build_hedged_plate": "Splitting the plate across core hypotheses",
+    "learn_from_results": "Reading the wet-lab measurements",
     "read_ledger": "Reading what the plate rests on",
 }
 
@@ -462,6 +510,16 @@ def _summarise(payload: str) -> str:
                 f"hypotheses ({spans}), {d['wells_per_hypothesis']} each · "
                 f"confounded: {d['position_check']['confounded']} · "
                 f"{d.get('work_note', '')}")
+
+    if "ddg_vs_signal" in d:
+        v = d["ddg_vs_signal"]
+        hyp = d.get("by_core_hypothesis") or {}
+        best = (f" · {max(hyp, key=lambda k: hyp[k]['median_signal'])} responded "
+                f"strongest" if len(hyp) >= 2 else "")
+        return (f"{d['responsive_wells']}/{d['test_wells']} wells responded · "
+                f"ddG {'predicted' if v['predictive'] else 'did NOT predict'} "
+                f"signal (rho {v['spearman']:+.2f}, p={v['permutation_p']})"
+                + best)
 
     if "ledger_markdown" in d:
         text = d["ledger_markdown"]
