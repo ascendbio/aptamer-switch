@@ -13,8 +13,13 @@ case "${1:-}" in
 Aptamer switch design for continuous biosensors.
 
   ./run                 launch the web UI on http://localhost:7860
+  ./run --share         also publish a password-protected public link (72h)
   ./run "IL-6"          run the agent for one biomarker, output to the terminal
   ./run --help          this message
+
+--share tunnels to THIS machine. The agent runs here and spends this machine's
+Claude session, Paperclip account and Modal credits, so the link is always
+password protected. Set APTAMER_PASSWORD to choose the password.
 
 Needs Python 3.12 with ViennaRNA, gradio and claude-agent-sdk:
   python3.12 -m venv venv && ./venv/bin/pip install -r requirements.txt
@@ -44,4 +49,8 @@ if [ -z "${VENV:-}" ]; then
   exit 1
 fi
 
-if [ -z "$1" ]; then exec "$VENV" app.py; else exec "$VENV" agent.py "$@"; fi
+case "${1:-}" in
+  --share) APTAMER_SHARE=1 exec "$VENV" app.py ;;
+  "")      exec "$VENV" app.py ;;
+  *)       exec "$VENV" agent.py "$@" ;;
+esac

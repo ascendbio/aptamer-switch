@@ -503,9 +503,33 @@ with gr.Blocks(title="Aptamer switch design") as demo:
 
 
 if __name__ == "__main__":
+    import os
+    import secrets
+
+    # A shared link tunnels to THIS machine: the agent still runs here, on this
+    # Claude Code session, this Paperclip account and these Modal credits. Every
+    # teammate's run spends the host's quota, so sharing is opt-in and always
+    # password-protected — a gradio.live URL is otherwise open to anyone who has
+    # it, and it stays live for 72 hours.
+    share = os.environ.get("APTAMER_SHARE") == "1"
+    auth = None
+    if share:
+        user = os.environ.get("APTAMER_USER", "team")
+        password = os.environ.get("APTAMER_PASSWORD") or secrets.token_urlsafe(9)
+        auth = (user, password)
+        print("\n  Shared link is password protected.")
+        print(f"    username: {user}\n    password: {password}")
+        print("  Runs execute on this machine and spend this machine's quota.\n")
+
     # System fonts only: the Soft theme's display face renders a capital E as a
     # curved epsilon, and it avoids a Google Fonts fetch on conference wifi.
-    demo.launch(theme=gr.themes.Soft(
-        font=["system-ui", "-apple-system", "Helvetica Neue", "Arial", "sans-serif"],
-        font_mono=["ui-monospace", "SF Mono", "Menlo", "Consolas", "monospace"],
-    ))
+    demo.launch(
+        share=share,
+        auth=auth,
+        theme=gr.themes.Soft(
+            font=["system-ui", "-apple-system", "Helvetica Neue", "Arial",
+                  "sans-serif"],
+            font_mono=["ui-monospace", "SF Mono", "Menlo", "Consolas",
+                       "monospace"],
+        ),
+    )

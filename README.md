@@ -54,6 +54,22 @@ python3.12 -m venv venv
 
 `run` locates a suitable interpreter itself; set `APTAMER_PY` to choose one.
 
+### Letting teammates try it
+
+```bash
+./run --share          # password-protected public link, prints the credentials
+```
+
+The tunnel points at **your** machine. The agent still runs locally, on your
+Claude Code session, your Paperclip account and your Modal credits, so every
+teammate's run spends your quota rather than theirs. The link is therefore
+always password protected — `gradio.live` URLs are open to anyone holding them
+and live for 72 hours. `APTAMER_PASSWORD` sets the password.
+
+For a teammate who wants their own quota, cloning the repo and running locally
+is better: the design pipeline needs nothing but `requirements.txt`, and the
+agent uses whatever Claude session is on their machine.
+
 ### What needs what
 
 | | needs | if missing |
