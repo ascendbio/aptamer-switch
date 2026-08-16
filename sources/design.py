@@ -318,14 +318,15 @@ def artifacts(result: dict, out_dir: Path) -> dict:
     # The mechanism figure needs one real construct to draw, so it is rendered
     # from the top-ranked well rather than an invented example.
     picked_rows = [r for r in result["rows"] if r["name"] in result["picked_names"]]
+    probe_fold = thermo.fold(result["parent"], tuple(result["core"]))
     pc = result["position_check"]
     out = {
         "funnel": plots.selection_funnel(stages, str(out_dir / f"{t}_funnel.png")),
         **({"switch": plots.switch_diagram(
             result["parent"], max(picked_rows, key=lambda r: r["rank_score"])["sequence"],
             tuple(result["core"]), str(out_dir / f"{t}_switch.png"),
-            is_quadruplex=thermo.fold(result["parent"],
-                                      tuple(result["core"])).core_is_quadruplex),
+            is_quadruplex=probe_fold.core_is_quadruplex,
+            real_mfe=probe_fold.mfe),
            } if picked_rows else {}),
         "window": plots.design_window(
             result["rows"], result["picked_names"],

@@ -293,7 +293,8 @@ TAIL_COLOUR = "#5b6ee1"     # the appended competing tail
 
 
 def switch_diagram(parent: str, construct: str, core: tuple[int, int],
-                   path: str, is_quadruplex: bool = False) -> str:
+                   path: str, is_quadruplex: bool = False,
+                   real_mfe: float = 0.0) -> str:
     """The mechanism, drawn: the parent's fold beside the switch built from it.
 
     This is the one picture that shows what the design actually does. On the
@@ -356,8 +357,20 @@ def switch_diagram(parent: str, construct: str, core: tuple[int, int],
 
         ax.set_aspect("equal")
         ax.set_axis_off()
-        ax.set_title(f"{title}   {mfe:.1f} kcal/mol", fontsize=11, color=INK,
-                     fontweight="bold", loc="left", pad=8)
+        # Put the caveat in the title, not under the picture. The number beside
+        # a heading is read as that molecule's energy, and for a quadruplex
+        # parent it is the energy of the three base pairs that happen to be
+        # drawable — 3% of the real stability.
+        if quadruplex and seq == parent:
+            ax.set_title(f"{title} — drawable pairing only", fontsize=11,
+                         color=INK, fontweight="bold", loc="left", pad=26)
+            ax.text(0.0, 1.012, f"shown {mfe:.1f} · real fold is a G-quadruplex "
+                                f"at {real_mfe:.1f} kcal/mol",
+                    transform=ax.transAxes, fontsize=9, color=PICKED, va="bottom")
+        else:
+            ax.set_title(f"{title}   {mfe:.1f} kcal/mol", fontsize=11, color=INK,
+                         fontweight="bold", loc="left",
+                         pad=26 if quadruplex else 8)
         ax.text(0.0, -0.04, caption, transform=ax.transAxes, fontsize=9,
                 color=INK_SOFT, va="top")
 
@@ -369,13 +382,13 @@ def switch_diagram(parent: str, construct: str, core: tuple[int, int],
         fig.text(x + .022, .018, lab, fontsize=8.5, color=INK_SOFT)
 
     if quadruplex:
-        fig.text(.06, .085,
-                 "This parent folds a G-quadruplex, which has no secondary-structure\n"
-                 "drawing. Watson-Crick pairing only is shown — the real fold is far\n"
-                 "more stable than the energy above (-9.7 vs -0.1 kcal/mol).",
-                 fontsize=8.5, color=PICKED, linespacing=1.5)
+        fig.text(.06, .075,
+                 "A G-quadruplex cannot be drawn as a secondary structure, so the "
+                 "left panel shows only\nthe Watson-Crick pairs. The design is "
+                 "computed against the real quadruplex energy, not this one.",
+                 fontsize=8.5, color=INK_SOFT, linespacing=1.5)
 
-    fig.tight_layout(rect=(0, 0.17 if quadruplex else 0.06, 1, 1))
+    fig.tight_layout(rect=(0, 0.15 if quadruplex else 0.06, 1, 1))
     fig.savefig(path, dpi=170, facecolor=SURFACE)
     plt.close(fig)
     return path
