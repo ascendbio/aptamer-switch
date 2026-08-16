@@ -87,10 +87,19 @@ def _tile(rows: list[dict], n: int, window: tuple[float, float] = WINDOW) -> lis
     return picked[:n]
 
 
+# Designing is deterministic for a given parent, core and affinity, so the same
+# request inside one process is answered from here. The sensitivity sweep and the
+# hedged plate both design over the same cores, and without this a five-minute
+# demo spends two of those minutes recomputing what it already knows.
+_run_cache: dict[tuple, dict] = {}
+
+
 def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float | None,
         target: str = "IL-6", mw_da: float | None = None,
         clinical_pg_per_ml: float = 5000.0, kd_source: str = "") -> dict:
     """Design the plate and return everything needed to justify it.
+
+    Cached per (parent, core, affinity) within a process.
 
     `kd_intrinsic_M` may be None, and often should be. Most published aptamers
     carry no measured affinity, and the honest output then omits every
@@ -101,6 +110,11 @@ def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float | None,
 
     `kd_source` records where the number came from, so a reader can judge it.
     """
+    key = (parent.upper(), tuple(core), kd_intrinsic_M, target, mw_da,
+           clinical_pg_per_ml)
+    if key in _run_cache:
+        return _run_cache[key]
+
     # Without a target sequence there is no honest molecular weight, so the
     # clinical conversion is skipped rather than defaulted.
     clinical_M = (thermo.pg_per_ml_to_molar(clinical_pg_per_ml, mw_da)
@@ -163,7 +177,7 @@ def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float | None,
     # needs a different architecture" and "the tool broke".
     universal = [k for k, n in failures.items() if rows and n >= 0.9 * len(rows)]
 
-    return {
+    out = {
         "target": target,
         "architecture": architecture,
         "design_window": list(window),
@@ -189,6 +203,8 @@ def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float | None,
         "kd_apparent_nM": [r["kd_apparent_nM"] for r in selected
                            if r["kd_apparent_nM"] is not None],
     }
+    _run_cache[key] = out
+    return out
 
 
 def _diagnose(universal: list[str], n_passing: int, parent: str) -> str:

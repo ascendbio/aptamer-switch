@@ -50,6 +50,9 @@ def candidate_cores(length: int, n: int = N_CORES) -> list[tuple[int, int]]:
     return [(s, s + span - 1) for s in starts]
 
 
+_sweep_cache: dict[tuple, dict] = {}
+
+
 def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None,
         kd_source: str = "", keep_results: bool = False) -> dict:
     """Design under each plausible core; report what survives all of them.
@@ -59,6 +62,11 @@ def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None
     productive cores to recover them doubled a three-minute sweep.
     """
     parent = parent.upper().replace("U", "T")
+    key = (parent, target, kd_intrinsic_M)
+    cached = _sweep_cache.get(key)
+    if cached is not None and (keep_results is False or "results" in cached):
+        return cached
+
     cores = candidate_cores(len(parent))
 
     per_core, selected_sets, results = [], [], {}
@@ -73,8 +81,7 @@ def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None
 
         picked = {w.sequence for w in r["wells"] if w.role == "test"}
         selected_sets.append(picked)
-        if keep_results:
-            results[tuple(core)] = r
+        results[tuple(core)] = r
         per_core.append({
             "core": list(core),
             "architecture": r["architecture"],
@@ -92,7 +99,7 @@ def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None
     # tested when it had not been, which is the opposite of the point.
     robust = set.intersection(*productive) if len(productive) >= 2 else set()
 
-    return {
+    out = {
         "target": target,
         "parent": parent,
         "cores_tested": [list(c) for c in cores],
@@ -107,8 +114,12 @@ def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None
         "robust_fraction": (round(len(robust) / max(len(s) for s in productive), 3)
                             if len(productive) >= 2 else None),
         "verdict": _verdict(len(productive), len(cores), len(robust)),
-        **({"results": results} if keep_results else {}),
+        # Always retained so a later hedged plate can reuse the sweep; the tool
+        # layer strips it before returning to the agent.
+        "results": results,
     }
+    _sweep_cache[key] = out
+    return out if keep_results else {k: v for k, v in out.items() if k != "results"}
 
 
 def _verdict(productive: int, tested: int, robust: int) -> str:
