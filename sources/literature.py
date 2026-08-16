@@ -339,7 +339,12 @@ _NAME_RE = re.compile(r"\b([A-Z][A-Za-z]{1,10}[- ]?\d{1,3}(?:\.\d)?|[A-Z]{2,5}\d
 
 
 SEQ_CONTEXT_PATTERN = "5[\u2032\u2019'`][ -]*(?:[ACGTacgt][ ]?){15,}"
-PER_PAPER_CAP = 25       # bound the slow path; partial coverage is reported
+# Every matched paper is read. At 25 the pass covered 28 of 53 papers and which
+# 28 depended on ordering, so the one paper carrying the usable IL-6 parent was
+# usually missed — and the agent then reported, correctly for what it had been
+# shown, that no IL-6 parent exists. A coverage lottery that loses the only
+# viable candidate is worse than the 60 seconds full coverage costs.
+PER_PAPER_CAP = 80
 
 
 def _paragraphs(grep_output: str) -> list[tuple[str, str]]:
@@ -483,7 +488,9 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
                 covered.add(doc_id)
 
     # Second pass only where the first found nothing, so the expensive path is
-    # bounded by how much the cheap one missed rather than by corpus size.
+    # bounded by how much the cheap one missed rather than by corpus size. The
+    # bound is now above any realistic match count, so coverage is complete and
+    # papers_read says so rather than quietly reporting a subset.
     probed = failed = 0
     for doc_id in [d for d in docs if d not in covered][:PER_PAPER_CAP]:
         probed += 1

@@ -73,6 +73,13 @@ Use the tools before judging. Find a published parent aptamer first — de novo 
 aptamer invention has no validated computational method, so without a parent \
 there is nothing honest to build on, and saying so is the right answer.
 
+Check every candidate's printed_as before choosing. A sequence printed as \
+binding a different protein — the receptor rather than the ligand, or another \
+analyte entirely — is not a parent for this target, whatever its length or fold. \
+If every candidate fails that check, stop and report it. Do not design from one \
+you have just rejected; a plate built on the wrong protein is worse than no \
+plate, because someone will synthesise it.
+
 Required sequence once a plate exists. Do all four before writing anything:
 
   1. validate_plate          — independent engine
@@ -147,7 +154,9 @@ def _ok(payload: dict) -> dict:
     "against a different protein, and this corpus contains both alongside real "
     "hits — 'aptamers for PCT' is procalcitonin, 'for sIL-6R' is the receptor "
     "rather than the ligand. If printed_as names another target, discard the "
-    "sequence and say why. If the result carries search_failed, the "
+    "sequence and say why. Never design from a discarded sequence: reporting "
+    "that no valid parent exists and then building a plate from a receptor "
+    "binder gives the lab something to synthesise that cannot work. If the result carries search_failed, the "
     "extraction service failed and an empty parent list is NOT evidence that no "
     "aptamer exists - say so and retry rather than concluding absence.",
     {"target": str},
