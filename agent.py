@@ -46,7 +46,11 @@ from claude_agent_sdk import (
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent / "sources"))
 import design  # noqa: E402
+import ledger  # noqa: E402
 import sensitivity  # noqa: E402
+import store  # noqa: E402
+
+REJECTED_COUNT = ledger.REJECTED
 import literature  # noqa: E402
 import thermo  # noqa: E402
 
@@ -74,9 +78,11 @@ papers report the same sequence.
 - The funnel: library size, how many survived each criterion, what killed the rest.
 - The single biggest risk, named plainly.
 
-After building a plate, validate it with the independent engine and test it
-against the core assumption, then report both. If the cores share no designs,
-say plainly that the plate is conditional on a guess. A plate filtered on a dimer criterion that only one
+After building a plate: validate it with the independent engine, test it against
+the core assumption, and read the ledger. Report all three. If the cores share no
+designs, say plainly that the plate is conditional on a guess. Name at least one
+external model that was tried and rejected, and why — a design presented without
+its failures reads as more certain than it is. A plate filtered on a dimer criterion that only one
 engine supports is not ready to synthesise.
 
 Three things to be precise about, because they are where this analysis goes wrong.
@@ -302,8 +308,27 @@ async def test_core_sensitivity(args: dict) -> dict:
     return _ok(result)
 
 
+@tool(
+    "read_ledger",
+    "Return what the most recent plate rests on: which numbers were measured, "
+    "which are chosen thresholds with their values, and which external models "
+    "were tried and rejected against a control. Call last, before writing the "
+    "memo, and use it to state the plate's assumptions in your own words rather "
+    "than presenting the design as settled.",
+    {},
+)
+async def read_ledger(args: dict) -> dict:
+    latest = store.latest_run(OUT)
+    if latest is None:
+        return _ok({"error": "no run archived yet; design a plate first"})
+    return _ok({
+        "run": latest.name,
+        "ledger_markdown": ledger.build(latest / "manifest.json"),
+    })
+
+
 TOOLS = [find_parents, assess_parent, design_plate, validate_plate,
-         test_core_sensitivity]
+         test_core_sensitivity, read_ledger]
 TOOL_NAMES = [f"mcp__{SERVER}__{t.name}" for t in TOOLS]
 
 LABELS = {
@@ -312,6 +337,7 @@ LABELS = {
     "design_plate": "Designing, scoring and laying out the plate",
     "validate_plate": "Re-scoring the plate with an independent engine",
     "test_core_sensitivity": "Testing the plate against the core assumption",
+    "read_ledger": "Reading what the plate rests on",
 }
 
 
@@ -365,6 +391,11 @@ def _summarise(payload: str) -> str:
         kind = "G-quadruplex" if d["core_is_quadruplex"] else "Watson-Crick"
         trust = "modellable" if d["opening_energy_trustworthy"] else "opening energy NOT reliable"
         return f"{kind} fold, MFE {d['mfe']} kcal/mol · {trust}"
+
+    if "ledger_markdown" in d:
+        text = d["ledger_markdown"]
+        return (f"{text.count(chr(10) + '- ')} entries: measured, assumed, and "
+                f"{len(REJECTED_COUNT)} models tested and rejected")
 
     if "cores_tested" in d:
         every = d.get("designs_selected_under_every_core")
