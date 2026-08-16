@@ -64,8 +64,13 @@ def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None
     parent = parent.upper().replace("U", "T")
     key = (parent, target, kd_intrinsic_M)
     cached = _sweep_cache.get(key)
-    if cached is not None and (keep_results is False or "results" in cached):
-        return cached
+    if cached is not None:
+        # Strip the per-core results on the way out unless the caller wants
+        # them. They are keyed by tuple for lookup, which is fine internally and
+        # not serialisable as JSON — returning them to a tool caller raised
+        # "keys must be str ... not tuple" on the second call and nowhere else,
+        # so only a re-run would have found it.
+        return cached if keep_results else _without_results(cached)
 
     cores = candidate_cores(len(parent))
 
@@ -126,7 +131,12 @@ def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None
         "results": results,
     }
     _sweep_cache[key] = out
-    return out if keep_results else {k: v for k, v in out.items() if k != "results"}
+    return out if keep_results else _without_results(out)
+
+
+def _without_results(sweep: dict) -> dict:
+    """The sweep minus its tuple-keyed per-core results, safe to serialise."""
+    return {k: v for k, v in sweep.items() if k != "results"}
 
 
 def _verdict(productive: int, tested: int, robust: int) -> str:
