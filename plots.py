@@ -422,3 +422,57 @@ def switch_diagram(parent: str, construct: str, core: tuple[int, int],
     fig.savefig(path, dpi=170, facecolor=SURFACE)
     plt.close(fig)
     return path
+
+
+def feedback_scatter(joined: list[dict], report: dict, path: str,
+                     provenance: str = "") -> str:
+    """Measured signal against the energy that was supposed to predict it.
+
+    The one figure drawn from numbers this pipeline did not compute. Wells are
+    coloured by the core hypothesis they were spent on, because that comparison
+    is the reason the hedged plate exists: two clouds at different heights is an
+    eliminated epitope, and it is visible before any statistics are quoted.
+
+    `provenance` is stamped onto the figure itself rather than left to the
+    caption. A scatter of simulated data is indistinguishable from a scatter of
+    measurements once it is on a slide, and the label has to travel with the
+    image.
+    """
+    tests = [r for r in joined if r["role"] == "test" and r["dd_g"] is not None]
+    hyps = sorted({r["core_hypothesis"] for r in tests if r["core_hypothesis"]})
+    fig, ax = plt.subplots(figsize=(7.4, 4.6), dpi=200)
+    fig.patch.set_facecolor(SURFACE)
+    _frame(ax, "ddG (kcal/mol) — tail versus fold, as designed",
+           "measured signal change (%)")
+
+    palette = [PICKED, CONTROL, KEEP]
+    for i, h in enumerate(hyps or [""]):
+        pts = [r for r in tests if r["core_hypothesis"] == h] if h else tests
+        ax.scatter([r["dd_g"] for r in pts], [r["signal"] for r in pts],
+                   s=46, alpha=0.85, linewidths=0.6, edgecolors=SURFACE,
+                   color=palette[i % len(palette)],
+                   label=(f"{h} — {sum(1 for r in pts if r['signal'] >= 10)}"
+                          f"/{len(pts)} responded" if h else "test wells"))
+
+    opt = report.get("measured_optimum_ddg")
+    if opt is not None:
+        ax.axvline(opt, color=INK_SOFT, lw=1.2, ls="--", zorder=0)
+        ax.annotate(f"measured optimum {opt:+.2f}", xy=(opt, ax.get_ylim()[1]),
+                    xytext=(4, -12), textcoords="offset points",
+                    fontsize=8, color=INK_SOFT)
+
+    stat = report.get("ddg_vs_signal", {})
+    verdict = ("recentre the window here" if stat.get("predictive")
+               else "not distinguishable from noise — window unchanged")
+    ax.set_title(f"Spearman {stat.get('spearman')}, permutation p="
+                 f"{stat.get('permutation_p')}  ·  {verdict}",
+                 fontsize=10, color=INK, loc="left", pad=10)
+    leg = ax.legend(frameon=False, fontsize=8, loc="upper right")
+    for t in leg.get_texts():
+        t.set_color(INK_SOFT)
+    if provenance:
+        fig.text(0.01, 0.015, provenance, fontsize=7.5, color="#b45309")
+    fig.tight_layout()
+    fig.savefig(path, facecolor=SURFACE)
+    plt.close(fig)
+    return path
