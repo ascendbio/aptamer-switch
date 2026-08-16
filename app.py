@@ -214,7 +214,7 @@ BLANK = (None, None, None, None, None, None, [], None)
 # so the two cannot drift apart silently.
 OUTPUT_ORDER = [
     "switch_img", "funnel_img", "dose_img", "window_img", "plate_img", "order",
-    "gallery", "compare", "ledger_md",
+    "gallery", "compare", "ledger_md", "feedback_box",
     "switch_box", "funnel_box", "dose_box", "dose_absent", "window_box", "plate_box",
     "compare_box", "gallery_box", "ledger_box",
 ]
@@ -238,6 +238,10 @@ def _panels(figs: tuple):
         switch, funnel, dose, window, plate,               # the five images
         gr.update(value=csv, visible=bool(csv)),           # order file
         gallery_items, table, text,                        # gallery, table, ledger
+        # The feedback panel appears only once there is a plate to give feedback
+        # on. Offering to read results from an experiment that has not been
+        # designed yet inverts the cycle, and asks for a file that cannot exist.
+        gr.update(visible=bool(csv)),                      # feedback_box
         gr.update(visible=bool(switch)),                   # switch_box
         gr.update(visible=bool(funnel)),                   # funnel_box
         gr.update(visible=bool(dose)),                     # dose_box
@@ -532,7 +536,7 @@ with gr.Blocks(title="Aptamer switch design") as demo:
             # synthesise the plate, run it, and bring the numbers back. Putting
             # this first asked for results from a plate that did not exist yet.
             with gr.Accordion("Providing feedback from wet lab experiment",
-                              open=False):
+                              open=False, visible=False) as feedback_box:
                 gr.Markdown(
                     "<sub>A CSV with a well column and a signal column — any "
                     "header wording. Uploaded, it is read **before** anything is "
@@ -631,7 +635,7 @@ with gr.Blocks(title="Aptamer switch design") as demo:
 
     # One list, in the same order _panels returns its values.
     outputs = [switch_img, funnel_img, dose_img, window_img, plate_img, order,
-               gallery, compare, ledger_md,
+               gallery, compare, ledger_md, feedback_box,
                switch_box, funnel_box, dose_box, dose_absent, window_box, plate_box,
                compare_box, gallery_box, ledger_box]
     assert len(outputs) == len(OUTPUT_ORDER), "outputs drifted from OUTPUT_ORDER"
