@@ -23,6 +23,7 @@ CLI:  python agent.py "IL-6"
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -696,15 +697,13 @@ async def analyse(target: str,
                 summary = _summarise(payload or "")
                 elapsed = time.monotonic() - started.get(block.tool_use_id, 0)
                 if summary:
-                    # "<1s" rather than "0s": a step that returned in 400 ms did
-                    # not take zero seconds, and rounding it up to 1s would put a
-                    # number on screen that was never measured.
-                    if not elapsed or elapsed >= 3600:
-                        took = ""
-                    elif elapsed < 1:
-                        took = "  [<1s]"
-                    else:
-                        took = f"  [{elapsed:.0f}s]"
+                    # Elapsed time is shown rounded UP to whole seconds, applied
+                    # uniformly rather than only to small values so the rule is
+                    # one convention and not a nudge. A sub-second step therefore
+                    # reads 1s: nearer the truth than 0s, which looks like a step
+                    # that never ran.
+                    took = (f"  [{math.ceil(elapsed)}s]"
+                            if elapsed and elapsed < 3600 else "")
                     yield "result", summary + took
 
 
