@@ -47,8 +47,12 @@ TIMEOUT = 600
 # a bounded probe rather than a stalled pipeline: at 60s per paper internally, a
 # blind retry over fifty documents is fifty minutes of waiting to learn the same
 # thing a single probe learns in twenty seconds.
-GREP_ATTEMPTS = 2               # one retry; the corpus fails intermittently
-GREP_BACKOFF_S = 3
+# The corpus search also fails under sustained load, independently of the query:
+# the same pattern that ran six times in a row succeeded, then failed minutes
+# later after heavy use. Retries are spaced rather than immediate, since an
+# instant retry into a rate limit just spends the attempt.
+GREP_ATTEMPTS = 3
+GREP_BACKOFF_S = 6
 
 MAP_PROBE_TIMEOUT = 25          # seconds; shorter than the reader's own 60s stall
 MAP_HEALTH_TTL = 300            # re-probe at most once every 5 minutes
@@ -181,6 +185,12 @@ MIN_SYNONYM_LEN = 4
 MAX_SYNONYM_LEN = 26
 MAX_VARIANTS = 8
 
+# The corpus engine rejects an over-large boolean pattern with "corpus search
+# error", so the alternation is capped by the length it produces rather than by
+# how many names it holds. Measured: 269 characters runs, 375 fails. Counting
+# variants was the wrong unit - two long synonyms cost more than six short ones.
+MAX_ALTERNATION_CHARS = 150
+
 
 def _gene_candidates(target: str) -> list[str]:
     """Plausible gene symbols for a typed target, most specific first.
@@ -246,6 +256,32 @@ def uniprot_synonyms(target: str) -> list[str]:
     return out
 
 
+def _split_target(target: str) -> list[str]:
+    """The distinct names inside whatever the agent typed.
+
+    The agent does not pass the string the user entered. It writes things like
+    "IL-6 (interleukin-6)" and "IL-6 / interleukin-6", and those went straight
+    into the search pattern: the parentheses and slash broke the corpus query
+    outright, which surfaced as an intermittent SEARCH FAILED that was in fact
+    perfectly deterministic given the phrasing. "human IL-6" did not fail but
+    matched three papers instead of fifty-three, which is worse - a quiet loss
+    rather than a loud one.
+
+    Each name is pulled out and searched on its own terms.
+    """
+    parts = re.split(r"[/,;]|\(|\)", target)
+    names, seen = [], set()
+    for raw in parts:
+        name = raw.strip().strip("-· ")
+        # Drop qualifiers that are not part of any name a paper would print.
+        name = re.sub(r"^(?:human|recombinant|mature|full[- ]length)\s+", "",
+                      name, flags=re.I).strip()
+        if len(name) >= 2 and name.lower() not in seen:
+            seen.add(name.lower())
+            names.append(name)
+    return names or [target.strip()]
+
+
 def _name_variants(target: str) -> list[str]:
     """The spellings a paper might actually use.
 
@@ -254,8 +290,11 @@ def _name_variants(target: str) -> list[str]:
     with a Greek letter, or just TNF. Likewise IL-6 appears as IL6 and as
     interleukin-6. The grep pattern has to carry all of them.
     """
-    t = target.strip()
-    out = {t, t.replace("-", ""), t.replace("-", " ")}
+    names = _split_target(target)
+    t = names[0]
+    out = set()
+    for n in names:
+        out.update({n, n.replace("-", ""), n.replace("-", " ")})
 
     greek = {"alpha": "\u03b1", "beta": "\u03b2", "gamma": "\u03b3", "delta": "\u03b4"}
     m = re.match(r"^(.*?)[- ]?(alpha|beta|gamma|delta)$", t, re.I)
@@ -389,7 +428,7 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
         if grep_rc == 0 and not printed:
             break
         if attempt + 1 < GREP_ATTEMPTS:
-            time.sleep(GREP_BACKOFF_S)
+            time.sleep(GREP_BACKOFF_S * (attempt + 1))
 
     if grep_rc != 0 or printed:
         return {"target": target, "searched_as": variants, "n_papers": 0,
