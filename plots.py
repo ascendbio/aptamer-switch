@@ -47,34 +47,52 @@ def _frame(ax, xlabel: str = "", ylabel: str = "") -> None:
 def selection_funnel(stages: list[tuple[str, int, str]], path: str) -> str:
     """How 96 were chosen, and what removed everything else.
 
-    The interesting number is not 96, it is the 8,577 it came from and the two
-    criteria that account for almost all of the loss. A funnel makes the
-    selectivity of each stage legible in a way a sentence does not.
+    The interesting number is not 96, it is the library it came from and the two
+    criteria that account for almost all of the loss.
+
+    Bar length is log-scaled but drawn in axes coordinates rather than on a log
+    axis. An earlier version placed the count and the note at data-space offsets
+    from the bar end on a symlog scale, so the visual gap between them shrank as
+    counts grew and the two labels overlapped at 12,058. Text columns are fixed;
+    only the bars move.
     """
-    fig, ax = plt.subplots(figsize=(9.5, 3.6))
-    fig.patch.set_facecolor(SURFACE)
+    import math
 
     labels = [s[0] for s in stages]
     counts = [s[1] for s in stages]
     notes = [s[2] for s in stages]
-    y = np.arange(len(stages))[::-1]
-    widest = max(counts)
 
-    for yi, (label, n, note) in zip(y, zip(labels, counts, notes)):
+    fig, ax = plt.subplots(figsize=(10.5, 0.62 * len(stages) + 1.1))
+    fig.patch.set_facecolor(SURFACE)
+    ax.set_facecolor(SURFACE)
+
+    widest = max(max(counts), 1)
+    # The count is right-aligned at COUNT_X, so the bar must stop far enough
+    # left that a seven-digit number still clears it: 1,234,567 at this font is
+    # about a tenth of the width.
+    BAR_MAX, COUNT_X, NOTE_X = 0.27, 0.40, 0.45
+
+    for i, (label, n, note) in enumerate(zip(labels, counts, notes)):
+        y = len(stages) - 1 - i
+        width = BAR_MAX * math.log10(n + 1) / math.log10(widest + 1) if n else 0.0
         colour = PICKED if label.startswith("on the plate") else KEEP
-        ax.add_patch(Rectangle((0, yi - 0.32), n, 0.64, color=colour, linewidth=0))
-        ax.text(widest * 0.012 + n, yi, f"{n:,}", va="center", fontsize=10,
-                color=INK, fontweight="bold")
-        ax.text(widest * 0.10 + n, yi, note, va="center", fontsize=8.5, color=INK_SOFT)
+        ax.add_patch(Rectangle((0, y - 0.3), width, 0.6, color=colour, linewidth=0,
+                               transform=ax.get_yaxis_transform()))
+        ax.text(COUNT_X, y, f"{n:,}", transform=ax.get_yaxis_transform(),
+                va="center", ha="right", fontsize=10.5, color=INK, fontweight="bold")
+        ax.text(NOTE_X, y, note, transform=ax.get_yaxis_transform(),
+                va="center", fontsize=8.5, color=INK_SOFT)
 
-    ax.set_yticks(y)
-    ax.set_yticklabels(labels, fontsize=9, color=INK)
-    ax.set_xscale("symlog")
-    ax.set_xlim(0, widest * 12)
-    ax.set_ylim(-0.7, len(stages) - 0.3)
+    ax.set_yticks(range(len(stages)))
+    ax.set_yticklabels(labels[::-1], fontsize=9.5, color=INK)
     ax.set_xticks([])
-    _frame(ax)
-    ax.spines["bottom"].set_visible(False)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(-0.6, len(stages) - 0.4)
+    ax.set_facecolor(SURFACE)
+    for side in ("top", "right", "bottom"):
+        ax.spines[side].set_visible(False)
+    ax.spines["left"].set_color(GRID)
+    ax.tick_params(colors=INK_SOFT, length=0)
     ax.set_title("From library to plate", fontsize=12, color=INK,
                  fontweight="bold", loc="left", pad=12)
 
