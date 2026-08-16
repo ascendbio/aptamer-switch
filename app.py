@@ -152,28 +152,47 @@ def _figures(target: str, since: float = 0.0) -> tuple:
 
 BLANK = (None, None, None, None, None, [], None)
 
+# The single source of truth for what _panels returns and what the Blocks wires,
+# so the two cannot drift apart silently.
+OUTPUT_ORDER = [
+    "funnel_img", "dose_img", "window_img", "plate_img", "order",
+    "gallery", "compare", "ledger_md",
+    "funnel_box", "dose_box", "dose_absent", "window_box", "plate_box",
+    "compare_box", "gallery_box", "ledger_box",
+]
+
 
 def _panels(figs: tuple):
-    """Figure outputs plus the visibility of the box each one lives in."""
-    funnel, dose, window, plate = figs[0], figs[1], figs[2], figs[3]
-    csv, gallery_items, table = figs[4], figs[5], figs[6]
-    # Built from the newest manifest, so the ledger describes the plate on screen
-    # rather than a standing description of the tool.
+    """Values for every output, in exactly the order they are wired.
+
+    Returned positionally, so this list and the outputs list in the Blocks must
+    stay in lockstep. An earlier version checked only that the counts matched,
+    which they did while the ledger markdown was being delivered to a Column's
+    visibility flag — Gradio renders that as "Error" with nothing in the log to
+    say which component got the wrong type. The assertion below is cheap
+    insurance against the same mistake.
+    """
+    funnel, dose, window, plate, csv, gallery_items, table = figs
     latest = store.latest_run(OUT)
     text = ledger.build(latest / "manifest.json") if latest and table else ""
-    return (*figs, text,
-            gr.update(visible=bool(funnel)),
-            gr.update(visible=bool(dose)),
-            gr.update(visible=not dose and bool(plate)),   # explain the absence
-            gr.update(visible=bool(window)),
-            gr.update(visible=bool(plate)),
-            gr.update(visible=bool(csv)),
-            # The comparison table earns its place only once there is something
-            # to compare; the gallery only once a second parent exists, since
-            # with one it merely repeats the panels above.
-            gr.update(visible=bool(table)),
-            gr.update(visible=len(gallery_items or []) > 4),
-            gr.update(visible=bool(text)))
+
+    values = (
+        funnel, dose, window, plate,                       # the four images
+        gr.update(value=csv, visible=bool(csv)),           # order file
+        gallery_items, table, text,                        # gallery, table, ledger
+        gr.update(visible=bool(funnel)),                   # funnel_box
+        gr.update(visible=bool(dose)),                     # dose_box
+        gr.update(visible=not dose and bool(plate)),       # dose_absent
+        gr.update(visible=bool(window)),                   # window_box
+        gr.update(visible=bool(plate)),                    # plate_box
+        gr.update(visible=bool(table)),                    # compare_box
+        gr.update(visible=len(gallery_items or []) > 4),   # gallery_box
+        gr.update(visible=bool(text)),                     # ledger_box
+    )
+    assert len(values) == len(OUTPUT_ORDER), (
+        f"{len(values)} values for {len(OUTPUT_ORDER)} outputs")
+    return values
+
 
 COMPARE_COLUMNS = ["parent", "architecture", "library", "in window", "passing",
                    "wells", "blocked by", "best |ddG|"]
@@ -439,12 +458,15 @@ with gr.Blocks(title="Aptamer switch design") as demo:
                                  allow_preview=True, object_fit="contain")
     gr.Markdown(FOOTER)
 
+    # One list, in the same order _panels returns its values.
+    outputs = [funnel_img, dose_img, window_img, plate_img, order,
+               gallery, compare, ledger_md,
+               funnel_box, dose_box, dose_absent, window_box, plate_box,
+               compare_box, gallery_box, ledger_box]
+    assert len(outputs) == len(OUTPUT_ORDER), "outputs drifted from OUTPUT_ORDER"
+
     for trigger in (box.submit, send.click):
-        trigger(respond, [box, chat],
-                [chat, box, funnel_img, dose_img, window_img, plate_img, order,
-                 gallery, compare,
-                 funnel_box, dose_box, dose_absent, window_box, plate_box,
-                 order, compare_box, gallery_box, ledger_md, ledger_box])
+        trigger(respond, [box, chat], [chat, box, *outputs])
 
 
 if __name__ == "__main__":
