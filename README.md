@@ -73,6 +73,29 @@ To skip retrieval and design from a known parent:
 | `store.py` | Per-run archive and a GPU result cache keyed on input hash. |
 | `complex_cli.py` | Optional: aptamer:protein complex prediction via Proto/Modal. |
 
+## Reproducibility
+
+Run the same query twice and the **computation** is identical. Verified across
+separate processes and across `PYTHONHASHSEED` values:
+
+| layer | reproducible | why |
+|---|---|---|
+| corpus grep | yes | deterministic regex over a fixed corpus |
+| sequence extraction | yes | regex, no model in the loop |
+| folding and scoring | yes | ViennaRNA is deterministic |
+| variant library | yes | enumerated, not sampled |
+| plate selection and layout | yes | seeded shuffle, fixed seed |
+| **the agent's own choices** | **no** | it is a language model |
+
+The plate is bit-identical between runs: same library size, same pass count, same
+96 sequences in the same wells. What varies is which parent the agent picks when
+several are returned, the order it calls tools in, and the wording of its memo.
+
+Each run records what it used — parent, core, thresholds, architecture, git
+commit — in `out/runs/<target>_<timestamp>/manifest.json`, so any plate can be
+regenerated exactly by feeding those values back to `design.run()`, without the
+agent in the loop.
+
 ## Known limitations — read before trusting output
 
 **The binding core is an assumption.** No paper maps where these cytokines

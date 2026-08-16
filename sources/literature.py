@@ -330,8 +330,13 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
 
     # One extra pass over just the papers that produced a candidate, to pick up
     # affinities stated outside the sequence's own paragraph.
-    seq_papers = {d for p in by_seq.values() for d in p.papers}
-    affinity_by_paper = {d: _paper_affinities(d) for d in list(seq_papers)[:PER_PAPER_CAP]}
+    # Sorted before slicing. Python randomises string hashing per process, so
+    # iterating a set of document ids gives a different order in every run:
+    # list(set)[:25] would silently probe a different 25 papers each time and
+    # return different affinities for the same query. Reproducible only by
+    # accident today, because IL-6 yields fewer papers than the cap.
+    seq_papers = sorted({d for p in by_seq.values() for d in p.papers})
+    affinity_by_paper = {d: _paper_affinities(d) for d in seq_papers[:PER_PAPER_CAP]}
     for parent in by_seq.values():
         seen_aff: list[str] = []
         for d in sorted(set(parent.papers)):
