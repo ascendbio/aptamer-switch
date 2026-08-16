@@ -315,12 +315,24 @@ TICK_SECONDS = 1.0
 CONCURRENT_RUNS = 4
 
 
-async def respond(target: str, history: list, session: str):
+async def respond(target: str, history: list, session: str,
+                  results_file: str | None = None):
     # Each browser session writes to its own directory. Without this two people
     # running at once overwrite each other's figures and the newest-file lookup
     # hands one of them the other's plate.
     OUT_DIR = workspace.use(session)
     target = (target or "").strip()
+
+    # Copy the upload into the session's own directory. Gradio hands over a path
+    # in a temporary location that it may clean up mid-run, and a teammate on a
+    # shared link has no other way to put a file where the tools can read it.
+    results_path = None
+    if results_file:
+        src = Path(results_file)
+        if src.exists():
+            results_path = OUT_DIR / "uploaded_results.csv"
+            results_path.write_bytes(src.read_bytes())
+
     if not target:
         yield history, "", *_panels(BLANK)
         return
@@ -344,7 +356,8 @@ async def respond(target: str, history: list, session: str):
             # this task too - a new task does not inherit the caller's context
             # automatically once it is created by create_task.
             workspace.use(session)
-            async for item in analyse(target):
+            async for item in analyse(target,
+                                      str(results_path) if results_path else None):
                 await queue.put(item)
         except Exception as exc:               # forwarded, not swallowed
             await queue.put(("error", str(exc)))
@@ -436,6 +449,13 @@ with gr.Blocks(title="Aptamer switch design") as demo:
                 box = gr.Textbox(placeholder="Biomarker, e.g. IL-6", show_label=False,
                                  scale=8, autofocus=True)
                 send = gr.Button("Design plate", variant="primary", scale=1)
+            # Optional, and the label says what happens if it is supplied: a
+            # measurement outranks every prediction upstream of it.
+            results_upload = gr.File(
+                label="Wet-lab results from a previous round (optional CSV) — "
+                      "a well column and a signal column. Supplied, these "
+                      "override the predicted design window.",
+                file_types=[".csv", ".tsv", ".txt"], type="filepath", height=90)
             gr.Examples(EXAMPLES, inputs=box, label="Try one")
             order = gr.File(label="Vendor order file (96 wells)", height=90,
                             visible=False)
@@ -521,8 +541,8 @@ with gr.Blocks(title="Aptamer switch design") as demo:
     assert len(outputs) == len(OUTPUT_ORDER), "outputs drifted from OUTPUT_ORDER"
 
     for trigger in (box.submit, send.click):
-        trigger(respond, [box, chat, session], [chat, box, *outputs],
-                concurrency_limit=CONCURRENT_RUNS)
+        trigger(respond, [box, chat, session, results_upload],
+                [chat, box, *outputs], concurrency_limit=CONCURRENT_RUNS)
 
 
 if __name__ == "__main__":

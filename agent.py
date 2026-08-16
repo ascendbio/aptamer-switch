@@ -581,10 +581,21 @@ def _options() -> ClaudeAgentOptions:
     )
 
 
-async def analyse(target: str) -> AsyncIterator[tuple[str, str]]:
+async def analyse(target: str,
+                  results_csv: str | None = None) -> AsyncIterator[tuple[str, str]]:
     """Yield ("tool"|"result"|"text", content) as the agent works."""
     prompt = (f"Design a 96-well plate of aptamer switch candidates for a "
               f"continuous E-AB biosensor against {target}.")
+    if results_csv:
+        # Measurements outrank prediction, so they are stated first and the
+        # instruction to read them is explicit rather than left to inference.
+        prompt = (f"Wet-lab results from a previous round are at {results_csv}. "
+                  f"Call learn_from_results on that file FIRST and let what it "
+                  f"reports govern everything after it — where a measurement "
+                  f"disagrees with a prediction, the measurement wins.\n\n"
+                  + prompt
+                  + " Use the measured optimum to place the design window rather "
+                    "than the default, and say plainly what the data changed.")
     started: dict[str, float] = {}
 
     async for message in query(prompt=prompt, options=_options()):
