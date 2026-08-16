@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import sys
 import time
 import uuid
@@ -409,9 +410,18 @@ async def respond(target: str, history: list, session: str,
             except asyncio.TimeoutError:
                 # Nothing new from the agent: refresh the elapsed counter so the
                 # page visibly keeps time while the tool works.
-                waited = time.monotonic() - started
-                history[-1] = {"role": "assistant",
-                               "content": render(f"   … working, {waited:.0f}s")}
+                #
+                # Before the first tool call there is no tool - the counter was
+                # still saying "working", which reads as work on the design when
+                # it is the agent SDK starting its subprocess (~8s) and the model
+                # reading a two-thousand-word brief to choose its first call
+                # (~3s). Naming the phase costs nothing and stops the wait
+                # looking like a stall in the science.
+                waited = math.ceil(time.monotonic() - started)
+                tick = (f"   … working, {waited}s" if trace else
+                        f"▸ Starting up — loading tools and reading the "
+                        f"brief, {waited}s")
+                history[-1] = {"role": "assistant", "content": render(tick)}
                 yield history, "", *_panels(figures)
                 continue
 
