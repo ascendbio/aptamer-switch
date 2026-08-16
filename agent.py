@@ -51,6 +51,7 @@ import feedback  # noqa: E402
 import hedged  # noqa: E402
 import ledger  # noqa: E402
 import plate  # noqa: E402
+import plots  # noqa: E402
 import sensitivity  # noqa: E402
 import store  # noqa: E402
 import workspace  # noqa: E402
@@ -459,6 +460,27 @@ async def learn_from_results(args: dict) -> dict:
                              f"{designed.name}; check the well column"})
     report = await anyio.to_thread.run_sync(lambda: feedback.analyse(joined))
     report["plate_read"] = designed.name
+
+    # Draw what the bench actually measured. Everything else this tool produces
+    # is a prediction; this is the one figure made from numbers the pipeline did
+    # not compute, and the comparison it shows - two core hypotheses at different
+    # heights - is the entire reason the hedged plate was worth synthesising.
+    #
+    # The provenance string is stamped on the image, not left to a caption. A
+    # scatter of simulated data is indistinguishable from measurements once it is
+    # on a screen or in a screenshot, and the label has to travel with it.
+    simulated = "SIMULATED" in results.name.upper()
+    try:
+        fig_path = await anyio.to_thread.run_sync(lambda: plots.feedback_scatter(
+            joined, report, str(out_dir / f"{designed.stem}_feedback.png"),
+            provenance=("SIMULATED results — demonstrates the feedback path; "
+                        "not measured" if simulated else
+                        f"measured — {results.name}")))
+        report["figure"] = str(fig_path)
+        report["data_source"] = ("simulated example file" if simulated
+                                 else results.name)
+    except Exception as exc:                  # a figure must not fail the read
+        report["figure_error"] = str(exc)
 
     # Hand back the parent this plate was built from, so a second round does not
     # spend two minutes re-searching the literature for a sequence it already

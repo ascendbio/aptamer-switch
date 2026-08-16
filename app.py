@@ -62,9 +62,28 @@ ASK = {
     "dose": "What can this sensor actually detect?",
     "window": "How were these 96 chosen out of thousands?",
     "plate": "Why are the positions scrambled?",
+    "measured": "What did the bench actually say?",
 }
 
 EXPLAIN = {
+    "measured": """
+**The only figure here made from numbers this tool did not compute.**
+
+Each point is a well: the energy it was *designed* to have on the horizontal
+axis, the signal it actually *produced* on the vertical. Colour is the core
+hypothesis the well was spent on — and that is what the hedged plate was built
+to show. Two clouds at different heights means one epitope hypothesis is dead,
+visible before any statistic is quoted.
+
+The title carries the test that matters. A correlation across ninety-odd noisy
+wells is easy to find and easy to believe, so it is compared against 2,000
+random shuffles of the same numbers. Above p=0.05 the window is **not** moved:
+recentring on noise would spend a second synthesis run confirming an artefact
+of the first.
+
+If the caption says SIMULATED, these are example numbers for demonstrating the
+loop, not a measurement.
+""",
     "switch": """
 **The mechanism, drawn from the actual sequences.**
 
@@ -198,7 +217,7 @@ def _figures(target: str, since: float = 0.0, final: bool = False) -> tuple:
 
     figs = (newest("*_switch.png"), newest("*_funnel.png"), newest("*_dose.png"),
             newest("*_window.png"), newest("*_plate.png"), order,
-            _gallery(since), _comparison(since))
+            _gallery(since), _comparison(since), newest("*_feedback.png"))
     # Same lockstep problem as _panels, one step earlier: removing the simulated
     # results file left this returning nine values into an eight-value unpack,
     # and every run failed with "too many values to unpack" — a message that
@@ -207,14 +226,15 @@ def _figures(target: str, since: float = 0.0, final: bool = False) -> tuple:
     return figs
 
 
-BLANK = (None, None, None, None, None, None, [], None)
+BLANK = (None, None, None, None, None, None, [], None, None)
 
 # The single source of truth for what _panels returns and what the Blocks wires,
 # so the two cannot drift apart silently.
 OUTPUT_ORDER = [
     "switch_img", "funnel_img", "dose_img", "window_img", "plate_img", "order",
-    "gallery", "compare", "ledger_md", "feedback_box",
+    "gallery", "compare", "ledger_md", "feedback_box", "measured_img",
     "switch_box", "funnel_box", "dose_box", "window_box", "plate_box",
+    "measured_box",
     "compare_box", "gallery_box", "ledger_box",
 ]
 
@@ -229,7 +249,8 @@ def _panels(figs: tuple):
     say which component got the wrong type. The assertion below is cheap
     insurance against the same mistake.
     """
-    switch, funnel, dose, window, plate, csv, gallery_items, table = figs
+    (switch, funnel, dose, window, plate, csv, gallery_items, table,
+     measured) = figs
     latest = store.latest_run(workspace.current())
     text = ledger.build(latest / "manifest.json") if latest and table else ""
 
@@ -241,11 +262,13 @@ def _panels(figs: tuple):
         # on. Offering to read results from an experiment that has not been
         # designed yet inverts the cycle, and asks for a file that cannot exist.
         gr.update(visible=bool(csv)),                      # feedback_box
+        measured,                                          # measured_img
         gr.update(visible=bool(switch)),                   # switch_box
         gr.update(visible=bool(funnel)),                   # funnel_box
         gr.update(visible=bool(dose)),                     # dose_box
         gr.update(visible=bool(window)),                   # window_box
         gr.update(visible=bool(plate)),                    # plate_box
+        gr.update(visible=bool(measured)),                 # measured_box
         gr.update(visible=bool(table)),                    # compare_box
         gr.update(visible=len(gallery_items or []) > 4),   # gallery_box
         gr.update(visible=bool(text)),                     # ledger_box
@@ -618,6 +641,14 @@ with gr.Blocks(title="Aptamer switch design") as demo:
                 with gr.Accordion(ASK["plate"], open=False):
                     gr.Markdown(EXPLAIN["plate"])
 
+            # First in reading order once it exists: a measurement outranks every
+            # prediction above it, and this is the only panel showing one.
+            with gr.Column(visible=False) as measured_box:
+                measured_img = gr.Image(label="What the bench measured",
+                                        height=250)
+                with gr.Accordion(ASK["measured"], open=False):
+                    gr.Markdown(EXPLAIN["measured"])
+
     # Every candidate the agent assessed, not only the one it settled on. A
     # rejected parent's funnel is often the more informative figure: it shows
     # which criterion removed the whole library and therefore why that candidate
@@ -657,8 +688,9 @@ with gr.Blocks(title="Aptamer switch design") as demo:
 
     # One list, in the same order _panels returns its values.
     outputs = [switch_img, funnel_img, dose_img, window_img, plate_img, order,
-               gallery, compare, ledger_md, feedback_box,
+               gallery, compare, ledger_md, feedback_box, measured_img,
                switch_box, funnel_box, dose_box, window_box, plate_box,
+               measured_box,
                compare_box, gallery_box, ledger_box]
     assert len(outputs) == len(OUTPUT_ORDER), "outputs drifted from OUTPUT_ORDER"
 
