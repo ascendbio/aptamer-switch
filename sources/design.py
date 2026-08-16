@@ -291,7 +291,24 @@ def _position_check(tests: list[plate.Well]) -> tuple[float, float]:
     return round(observed, 3), round(null[int(0.95 * len(null))], 3)
 
 
-def simulated_for(plate_csv: Path) -> Path:
+def _write_demo_results(plate_csv: Path) -> Path | None:
+    """Refresh the demo results file for the plate just written.
+
+    Silent and best-effort. The join is on well position, so this only stays
+    meaningful while it matches the current plate — regenerating with every plate
+    is what keeps a demonstration from pairing a results file with the wrong
+    wells and reporting a correlation that means nothing.
+    """
+    try:
+        import workspace
+        demo_dir = workspace.ROOT / "demo"
+        demo_dir.mkdir(parents=True, exist_ok=True)
+        return simulated_for(plate_csv, demo_dir)
+    except Exception:
+        return None            # a demo convenience must never fail a design run
+
+
+def simulated_for(plate_csv: Path, out_dir: Path | None = None) -> Path:
     """Write simulated wet-lab results matching this exact plate.
 
     Only ever called explicitly, by `./run --demo-results`. It used to run
@@ -313,9 +330,9 @@ def simulated_for(plate_csv: Path) -> Path:
                 hypothesis = row["Core hypothesis"]
                 break
     target = plate_csv.stem.replace("_hedged_plate", "").replace("_plate", "")
-    return feedback.example_results(
-        plate_csv, plate_csv.parent / f"SIMULATED_results_{target}.csv",
-        winning_hypothesis=hypothesis)
+    destination = (out_dir or plate_csv.parent) / f"SIMULATED_results_{target}.csv"
+    return feedback.example_results(plate_csv, destination,
+                                    winning_hypothesis=hypothesis)
 
 
 def artifacts(result: dict, out_dir: Path) -> dict:
@@ -374,8 +391,13 @@ def artifacts(result: dict, out_dir: Path) -> dict:
         out["plate"] = plots.plate_map(
             result["wells"], str(out_dir / f"{t}_plate.png"),
             null_p95=pc["null_p95"], observed=pc["observed"])
-        out["csv"] = str(plate.write_order(result["wells"],
-                                           out_dir / f"{t}_plate.csv"))
+        csv_path = plate.write_order(result["wells"], out_dir / f"{t}_plate.csv")
+        out["csv"] = str(csv_path)
+        # Kept ready but out of sight: written to out/demo/ so it is there when a
+        # demonstration needs it, and never into the run directory or the
+        # interface, where a file of invented measurements would read as
+        # something this tool produces.
+        _write_demo_results(csv_path)
     # Copy the run's outputs alongside its manifest so the directory is
     # self-contained: a plate is a lab record and should not depend on files
     # that the next run will overwrite.

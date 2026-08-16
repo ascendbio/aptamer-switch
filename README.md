@@ -162,16 +162,14 @@ What it reports, and what it refuses to report:
 * **where the optimum actually sits**, so the next window is centred on a
   measurement rather than a model.
 
-To try the loop before real data exists:
+To try the loop before real data exists, a matching simulated file is kept in
+`out/demo/`, refreshed silently whenever a plate is written. Upload it through
+the feedback panel like any other results file.
 
-```bash
-./run --demo-results
-```
-
-That finds the newest plate — including the per-session ones — and writes two
-simulated files beside it. Regenerate them after every run: the join is on well
-position, so a file from an older plate loads happily against a new one and
-produces a correlation that means nothing.
+It is written there rather than beside the design output, and never offered in
+the interface: the app designs plates, and a file of invented measurements
+presented among its outputs would say it produces bench data. `./run
+--demo-results` regenerates it explicitly, plus a pure-noise variant.
 
 `DEMO_1_signal.csv` has signal peaking near the predicted optimum with one core
 hypothesis responding; `DEMO_2_no_signal.csv` is noise. **Demonstrate the second
