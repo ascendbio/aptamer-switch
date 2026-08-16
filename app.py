@@ -60,6 +60,17 @@ is left out rather than filled in.
 Everything else on the plate is unaffected: ddG, specificity and dimer margins
 are computed from sequence and never touch affinity."""
 
+# One question per panel, naming what its guide actually answers. Five identical
+# "What am I looking at?" headers gave a reader no way to tell which one held the
+# thing they were wondering about.
+ASK = {
+    "switch": "How does a tail turn binding into a signal?",
+    "funnel": "Why 96, and what removed the rest?",
+    "dose": "What can this sensor actually detect?",
+    "window": "How were these 96 chosen out of thousands?",
+    "plate": "Why are the positions scrambled?",
+}
+
 EXPLAIN = {
     "switch": """
 **The mechanism, drawn from the actual sequences.**
@@ -498,29 +509,29 @@ with gr.Blocks(title="Aptamer switch design") as demo:
             # than inside a collapsed accordion nobody opens.
             with gr.Column(visible=False) as switch_box:
                 switch_img = gr.Image(label="How the switch works", height=230)
-                with gr.Accordion("What am I looking at?", open=False):
+                with gr.Accordion(ASK["switch"], open=False):
                     gr.Markdown(EXPLAIN["switch"])
 
             with gr.Column(visible=False) as funnel_box:
                 funnel_img = gr.Image(label="From library to plate", height=200)
-                with gr.Accordion("What am I looking at?", open=False):
+                with gr.Accordion(ASK["funnel"], open=False):
                     gr.Markdown(EXPLAIN["funnel"])
 
             with gr.Column(visible=False) as dose_box:
                 dose_img = gr.Image(label="What the sensor can actually see",
                                     height=250)
-                with gr.Accordion("What am I looking at?", open=False):
+                with gr.Accordion(ASK["dose"], open=False):
                     gr.Markdown(EXPLAIN["dose"])
             dose_absent = gr.Markdown(NO_DOSE, visible=False)
 
             with gr.Column(visible=False) as window_box:
                 window_img = gr.Image(label="Switching vs specificity", height=260)
-                with gr.Accordion("What am I looking at?", open=False):
+                with gr.Accordion(ASK["window"], open=False):
                     gr.Markdown(EXPLAIN["window"])
 
             with gr.Column(visible=False) as plate_box:
                 plate_img = gr.Image(label="The plate", height=250)
-                with gr.Accordion("What am I looking at?", open=False):
+                with gr.Accordion(ASK["plate"], open=False):
                     gr.Markdown(EXPLAIN["plate"])
 
     # Every candidate the agent assessed, not only the one it settled on. A
