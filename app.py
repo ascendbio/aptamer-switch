@@ -501,9 +501,20 @@ with gr.Blocks(title="Aptamer switch design") as demo:
                     "skipped: round two uses the parent the measured plate was "
                     "built from, so a run with results takes about half as "
                     "long.</sub>")
-                results_upload = gr.File(label=None, file_types=[".csv", ".tsv",
-                                                                ".txt"],
-                                         type="filepath", height=90)
+                # An UploadButton rather than a File box. A File box lists what
+                # you gave it with a size and a download arrow, which offers to
+                # hand back the file you just supplied — and next to a genuine
+                # download (the vendor order file) it blurs which artifacts this
+                # tool produced and which it merely received.
+                with gr.Row():
+                    upload_btn = gr.UploadButton(
+                        "Upload results CSV", file_types=[".csv", ".tsv", ".txt"],
+                        variant="secondary", scale=3)
+                    clear_upload = gr.Button("Remove", scale=1, visible=False)
+                # The path lives in state, not in a visible component, so nothing
+                # on the page implies the file is downloadable.
+                results_upload = gr.State(None)
+                upload_note = gr.Markdown(visible=False)
         with gr.Column(scale=2):
             # Each figure carries its own reading guide, collapsed. The plots
             # answer questions that are not obvious from the axes — what a
@@ -584,6 +595,31 @@ with gr.Blocks(title="Aptamer switch design") as demo:
                switch_box, funnel_box, dose_box, dose_absent, window_box, plate_box,
                compare_box, gallery_box, ledger_box]
     assert len(outputs) == len(OUTPUT_ORDER), "outputs drifted from OUTPUT_ORDER"
+
+    def _took_upload(path):
+        """Confirm the file by name, and say what to press next.
+
+        The button relabels because after an upload the next action is not the
+        same action: round two redesigns from measurement rather than designing
+        from the literature, and a button still reading "Design plate" gives no
+        sign the run will be different.
+        """
+        name = Path(path).name if path else ""
+        return (path,
+                gr.update(value=f"<sub>Loaded **{name}**. Press **Redesign "
+                                f"plate** — the measurements are read first and "
+                                f"place the next window.</sub>", visible=True),
+                gr.update(visible=True),
+                gr.update(value="Redesign plate"))
+
+    def _drop_upload():
+        return (None, gr.update(visible=False), gr.update(visible=False),
+                gr.update(value="Design plate"))
+
+    upload_btn.upload(_took_upload, upload_btn,
+                      [results_upload, upload_note, clear_upload, send])
+    clear_upload.click(_drop_upload, None,
+                       [results_upload, upload_note, clear_upload, send])
 
     for trigger in (box.submit, send.click):
         trigger(respond, [box, chat, session, results_upload],
