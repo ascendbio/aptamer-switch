@@ -46,22 +46,95 @@ You get 96 wells tiling the usable design window, with controls, randomised
 positions, and a vendor order file — a plate built to locate the optimum in one
 wet-lab round."""
 
+EXPLAIN = {
+    "funnel": """
+**Every candidate considered, and what removed each one.**
+
+The interesting number is not 96 — it is the library it came from and the two
+criteria that account for nearly all of the loss.
+
+* **library** — every combination of tail length, register, mismatch and linker
+* **switching window** — designs where the tail and the fold are close enough in
+  energy that target binding can flip the balance. Outside it, the switch is
+  stuck open or stuck shut and reports nothing.
+* **passes all criteria** — survivors of the specificity and manufacturability
+  filters. These are hard filters, not weights: a design that dimerises is not
+  redeemed by a good switching score.
+* **on the plate** — tiled across the window, with 8 wells kept for controls.
+
+A stage that removes almost everything is describing the *parent*, not choosing
+between designs.
+""",
+    "dose": """
+**What fraction of sensors are bound at a given analyte concentration.**
+
+Occupancy is the ceiling on any signal: a sensor cannot report on a molecule that
+never binds it. The shaded bands are clinical ranges; the dashed line is a 10%
+occupancy floor, which is an **assumed** working limit, not a measured one.
+
+The dashed curve is the parent aptamer; the solid curve is the switch built from
+it. The gap between them is the price of switching — the target has to pay the
+core-opening energy itself, so a switch always binds more weakly than its parent.
+
+**This panel is blank when no paper reports an affinity for the parent**, which
+is the common case. The curve's whole content is where it sits on the
+concentration axis, and that position comes from Kd. Drawn from a placeholder it
+would be a picture of an assumption.
+""",
+    "window": """
+**The two axes the plate is actually selected on.**
+
+*Horizontal* — ddG, the competition between the tail and the fold. Near zero is
+where a sensor can switch. Strongly negative, the tail wins and the aptamer can
+never fold; strongly positive, the tail never engages and nothing moves.
+
+*Vertical* — specificity margin: how much the tail prefers its intended site over
+the best alternative site in the same molecule. A tail that binds two places
+reports a shape change that has nothing to do with the target.
+
+Grey points were filtered out and are left visible on purpose, so the shape of
+what was rejected stays legible instead of being cropped away. Orange points are
+the wells on the plate.
+""",
+    "plate": """
+**The physical 96-well plate, coloured by ddG.**
+
+Blue wells are controls: the parent with no switch, a scrambled sequence, both
+no-switch extremes in duplicate, and a blank. Each answers a question a failed
+plate would otherwise leave open — was the aptamer ever any good, does the assay
+respond at all, is a flat well flat for the reason we think.
+
+**Position is randomised against ddG on purpose.** Plates have row and column
+gradients and edge wells evaporate faster; laying the energy ladder out in plate
+order would alias those effects onto the design variable and produce a beautiful
+dose-response that is really the edge drying out. The caption reports the check:
+observed row spread against what random assignment gives.
+""",
+}
+
 FOOTER = ("<sub>Evidence: published aptamer sequences via Paperclip full-text grep · "
           "ViennaRNA 2.7.2 folding with DNA parameters at 37 °C · "
           "designed for electrochemical aptamer-based (E-AB) sensors</sub>")
 
 
-def _figures(target: str) -> tuple:
-    """Whatever the agent rendered for this target, in reading order."""
-    stem = target.strip().replace("/", "_")
-    names = ("funnel", "dose", "window", "plate")
-    paths = []
-    for n in names:
-        p = OUT / f"{stem}_{n}.png"
-        paths.append(str(p) if p.exists() else None)
-    csv = OUT / f"{stem}_plate.csv"
-    paths.append(str(csv) if csv.exists() else None)
-    return tuple(paths)
+def _figures(target: str, since: float = 0.0) -> tuple:
+    """This run's figures, in reading order.
+
+    Found by modification time, not by filename. The agent names its own target
+    argument, and it does not use the string the user typed: a query for "IL-6"
+    produced files called "IL-6 (19mer, Kd unknown - placeholder)_funnel.png" and
+    "IL-6R (AIR-3A parent)_funnel.png". Matching on the typed name therefore
+    showed nothing at all — or worse, silently showed figures left over from an
+    earlier run, which is a wrong answer rather than a missing one.
+
+    `since` is the moment this run began, so only files it actually wrote qualify.
+    """
+    def newest(pattern: str) -> str | None:
+        hits = [p for p in OUT.glob(pattern) if p.stat().st_mtime >= since]
+        return str(max(hits, key=lambda p: p.stat().st_mtime)) if hits else None
+
+    return (newest("*_funnel.png"), newest("*_dose.png"), newest("*_window.png"),
+            newest("*_plate.png"), newest("*_plate.csv"))
 
 
 BLANK = (None, None, None, None, None)
@@ -100,6 +173,7 @@ async def respond(target: str, history: list):
 
     task = asyncio.create_task(pump())
     started = time.monotonic()
+    run_began = time.time()          # wall clock, to match file mtimes
     figures = BLANK
 
     def render(tick: str = "") -> str:
@@ -143,7 +217,7 @@ async def respond(target: str, history: list):
             # Figures appear as soon as the design tool has written them, which
             # is mid-run — the reader gets the plate while the memo is still
             # being written.
-            figures = await asyncio.to_thread(_figures, target)
+            figures = await asyncio.to_thread(_figures, target, run_began)
             yield history, "", *figures
     except Exception as exc:
         task.cancel()
@@ -156,7 +230,7 @@ async def respond(target: str, history: list):
     # the agent's written reasoning lived only in this browser tab until now —
     # and the reasoning is the part that explains why the numbers were accepted.
     await asyncio.to_thread(_archive, target, memo, trace)
-    yield history, "", *await asyncio.to_thread(_figures, target)
+    yield history, "", *await asyncio.to_thread(_figures, target, run_began)
 
 
 def _archive(target: str, memo: str, trace: list[str]) -> None:
@@ -181,10 +255,26 @@ with gr.Blocks(title="Aptamer switch design") as demo:
             gr.Examples(EXAMPLES, inputs=box, label="Try one")
             order = gr.File(label="Vendor order file (96 wells)", height=90)
         with gr.Column(scale=2):
+            # Each figure carries its own reading guide, collapsed. The plots
+            # answer questions that are not obvious from the axes — what a
+            # negative ddG means, why a well can pass on rank and still be
+            # rejected — and a reader who has to ask is a reader who will not
+            # trust the plate.
             funnel_img = gr.Image(label="From library to plate", height=200)
+            with gr.Accordion("What am I looking at?", open=False):
+                gr.Markdown(EXPLAIN["funnel"])
+
             dose_img = gr.Image(label="What the sensor can actually see", height=250)
+            with gr.Accordion("What am I looking at?", open=False):
+                gr.Markdown(EXPLAIN["dose"])
+
             window_img = gr.Image(label="Switching vs specificity", height=260)
+            with gr.Accordion("What am I looking at?", open=False):
+                gr.Markdown(EXPLAIN["window"])
+
             plate_img = gr.Image(label="The plate", height=250)
+            with gr.Accordion("What am I looking at?", open=False):
+                gr.Markdown(EXPLAIN["plate"])
     gr.Markdown(FOOTER)
 
     for trigger in (box.submit, send.click):
