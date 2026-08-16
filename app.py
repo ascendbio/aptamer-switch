@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import threading
 import sys
 import time
 import uuid
@@ -740,6 +741,33 @@ if __name__ == "__main__":
 
     # System fonts only: the Soft theme's display face renders a capital E as a
     # curved epsilon, and it avoids a Google Fonts fetch on conference wifi.
+    # Wait for the port to actually answer, then say so. Gradio prints its URL
+    # while the server is still binding, so opening the browser on that line
+    # gives "Unable to connect" and no way to tell a slow start from a failed
+    # one. The banner below is printed only after a real request succeeds.
+    def _announce(port: int = 7860) -> None:
+        import http.client
+        import webbrowser
+        url = f"http://127.0.0.1:{port}"
+        for _ in range(600):                       # up to 60s, then give up quietly
+            time.sleep(0.1)
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+                conn.request("GET", "/")
+                if conn.getresponse().status < 500:
+                    break
+            except OSError:
+                continue
+        else:
+            return
+        line = "─" * 46
+        print(f"\n{line}\n  READY  →  {url}\n{line}", flush=True)
+        # 127.0.0.1 rather than localhost: gradio binds IPv4 only, and macOS
+        # resolves localhost to ::1 first, which nothing is listening on.
+        webbrowser.open(url)
+
+    threading.Thread(target=_announce, daemon=True).start()
+
     demo.launch(
         share=share,
         auth=auth,
