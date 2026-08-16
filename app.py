@@ -383,7 +383,15 @@ async def respond(target: str, history: list, session: str,
     history = history + [{"role": "user", "content": target}]
     trace: list[str] = []
     memo = ""
-    history.append({"role": "assistant", "content": "_Working…_"})
+    # Naming the first step matters more here than anywhere else in the run: the
+    # panels have just been blanked, the agent takes about ten seconds to start,
+    # and "Working" over an empty page is indistinguishable from a dead button.
+    opening = ("**Reading your wet-lab results first**, then designing from the "
+               "parent that plate was built from. No literature search this "
+               "round." if results_path else
+               "**Searching the literature** for published aptamers against "
+               f"{target}. This takes a few minutes end to end.")
+    history.append({"role": "assistant", "content": opening})
     yield history, "", *_panels(BLANK)
 
     # The agent is consumed through a queue rather than iterated directly, so the
@@ -414,6 +422,8 @@ async def respond(target: str, history: list, session: str,
     figures = BLANK
 
     def render(tick: str = "") -> str:
+        if not trace and not memo:
+            return opening + (f"\n\n`{tick}`" if tick else "")
         body = "\n".join(f"`{line}`" for line in trace)
         if tick:
             body += f"\n`{tick}`" if body else f"`{tick}`"
@@ -651,9 +661,21 @@ with gr.Blocks(title="Aptamer switch design") as demo:
     clear_upload.click(_drop_upload, None,
                        [results_upload, upload_note, clear_upload, send])
 
+    def _busy():
+        return gr.update(value="Working…", interactive=False)
+
+    def _idle(results):
+        return gr.update(value="Redesign plate" if results else "Design plate",
+                         interactive=True)
+
+    # Chained rather than folded into respond's outputs: the outputs list is
+    # asserted against OUTPUT_ORDER, and adding a component to it for a cosmetic
+    # state is how the panels drifted out of order last time.
     for trigger in (box.submit, send.click):
-        trigger(respond, [box, chat, session, results_upload],
-                [chat, box, *outputs], concurrency_limit=CONCURRENT_RUNS)
+        (trigger(_busy, None, send)
+         .then(respond, [box, chat, session, results_upload],
+               [chat, box, *outputs], concurrency_limit=CONCURRENT_RUNS)
+         .then(_idle, results_upload, send))
 
 
 if __name__ == "__main__":
