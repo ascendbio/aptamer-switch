@@ -538,10 +538,23 @@ if __name__ == "__main__":
     auth = None
     if share:
         user = os.environ.get("APTAMER_USER", "team")
-        password = os.environ.get("APTAMER_PASSWORD") or secrets.token_urlsafe(9)
+        # Generated once and kept, so a restart does not invalidate credentials
+        # already sent to the team. A fresh password on every launch means
+        # re-messaging everyone each time the app is restarted, which during a
+        # hackathon is constantly.
+        store_path = OUT / ".share_password"
+        password = os.environ.get("APTAMER_PASSWORD")
+        if not password:
+            if store_path.exists():
+                password = store_path.read_text().strip()
+            else:
+                password = secrets.token_urlsafe(9)
+                OUT.mkdir(parents=True, exist_ok=True)
+                store_path.write_text(password)
         auth = (user, password)
         print("\n  Shared link is password protected.")
         print(f"    username: {user}\n    password: {password}")
+        print("  The password persists across restarts; the URL below does not.")
         print("  Runs execute on this machine and spend this machine's quota.\n")
 
     # System fonts only: the Soft theme's display face renders a capital E as a
