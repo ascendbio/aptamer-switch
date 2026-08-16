@@ -238,10 +238,39 @@ def example_results(plate_csv: Path, out_csv: Path, seed: int = SEED,
     return out_csv
 
 
+def newest_plate(root: Path) -> Path | None:
+    """The most recently written plate anywhere under out/, sessions included.
+
+    A results file is only meaningful against the plate it was generated from:
+    the join is on well position, so an old file loads happily against a new
+    plate and produces a correlation that means nothing. Finding the current
+    plate automatically is the difference between a demo that shows the loop and
+    one that shows noise.
+    """
+    plates = [p for p in root.rglob("*_plate.csv")]
+    return max(plates, key=lambda p: p.stat().st_mtime) if plates else None
+
+
 if __name__ == "__main__":
     import json
+
     out = Path(__file__).resolve().parent.parent / "out"
-    plate = Path(sys.argv[1]) if len(sys.argv) > 1 else out / "IL-6_plate.csv"
-    results = out / "example_results.csv"
-    example_results(plate, results)
-    print(json.dumps(analyse(load(plate, results)), indent=2)[:2200])
+    plate = Path(sys.argv[1]) if len(sys.argv) > 1 and not sys.argv[1].startswith("-") \
+        else newest_plate(out)
+    if plate is None:
+        sys.exit("no plate found under out/ — design one first")
+
+    hyp = None
+    import csv as _csv
+    for row in _csv.DictReader(plate.open()):
+        if row.get("Core hypothesis"):
+            hyp = row["Core hypothesis"]
+            break
+
+    a = example_results(plate, out / "DEMO_1_signal.csv", winning_hypothesis=hyp)
+    b = example_results(plate, out / "DEMO_2_no_signal.csv", signal=False, seed=11)
+    print(f"plate: {plate.relative_to(out.parent)}")
+    for f in (a, b):
+        r = analyse(load(plate, f))
+        print(f"\n{f.name}")
+        print(f"  {r['verdict'][:200]}")

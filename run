@@ -15,6 +15,7 @@ Aptamer switch design for continuous biosensors.
   ./run                 launch the web UI on http://localhost:7860
   ./run --share         also publish a password-protected public link (72h)
   ./run "IL-6"          run the agent for one biomarker, output to the terminal
+  ./run --demo-results  write simulated wet-lab data matching your newest plate
   ./run --help          this message
 
 --share tunnels to THIS machine. The agent runs here and spends this machine's
@@ -50,6 +51,7 @@ if [ -z "${VENV:-}" ]; then
 fi
 
 case "${1:-}" in
+  --demo-results) exec "$VENV" sources/feedback.py ;;
   --share) APTAMER_SHARE=1 exec "$VENV" app.py ;;
   "")      exec "$VENV" app.py ;;
   *)       exec "$VENV" agent.py "$@" ;;

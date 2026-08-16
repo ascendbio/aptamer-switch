@@ -162,8 +162,22 @@ What it reports, and what it refuses to report:
 * **where the optimum actually sits**, so the next window is centred on a
   measurement rather than a model.
 
-`sources/feedback.py` can generate a clearly-labelled synthetic results file if
-you want to try the loop before real data exists.
+To try the loop before real data exists:
+
+```bash
+./run --demo-results
+```
+
+That finds the newest plate — including the per-session ones — and writes two
+simulated files beside it. Regenerate them after every run: the join is on well
+position, so a file from an older plate loads happily against a new one and
+produces a correlation that means nothing.
+
+`DEMO_1_signal.csv` has signal peaking near the predicted optimum with one core
+hypothesis responding; `DEMO_2_no_signal.csv` is noise. **Demonstrate the second
+one** — a tool that finds a story in noise is worse than no tool, and this one
+reports p=0.26 and refuses to move the window. Every row of both files carries
+`SYNTHETIC EXAMPLE - not measured` in its own column.
 
 ## Known limitations — read before trusting output
 
