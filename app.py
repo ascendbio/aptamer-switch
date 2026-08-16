@@ -661,8 +661,11 @@ with gr.Blocks(title="Aptamer switch design") as demo:
     clear_upload.click(_drop_upload, None,
                        [results_upload, upload_note, clear_upload, send])
 
-    def _busy():
-        return gr.update(value="Working…", interactive=False)
+    def _busy(results):
+        # Mirrors the idle label, so the button names the job it is doing rather
+        # than only reporting that it is doing one.
+        return gr.update(value="Working on redesign…" if results
+                         else "Working on design…", interactive=False)
 
     def _idle(results):
         return gr.update(value="Redesign plate" if results else "Design plate",
@@ -672,7 +675,7 @@ with gr.Blocks(title="Aptamer switch design") as demo:
     # asserted against OUTPUT_ORDER, and adding a component to it for a cosmetic
     # state is how the panels drifted out of order last time.
     for trigger in (box.submit, send.click):
-        (trigger(_busy, None, send)
+        (trigger(_busy, results_upload, send)
          .then(respond, [box, chat, session, results_upload],
                [chat, box, *outputs], concurrency_limit=CONCURRENT_RUNS)
          .then(_idle, results_upload, send))
