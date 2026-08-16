@@ -179,7 +179,7 @@ FOOTER = ("<sub>Evidence: published aptamer sequences via Paperclip full-text gr
           "designed for electrochemical aptamer-based (E-AB) sensors</sub>")
 
 
-def _figures(target: str, since: float = 0.0) -> tuple:
+def _figures(target: str, since: float = 0.0, final: bool = False) -> tuple:
     """This run's figures, in reading order.
 
     Found by modification time, not by filename. The agent names its own target
@@ -197,8 +197,21 @@ def _figures(target: str, since: float = 0.0) -> tuple:
         hits = [p for p in out_dir.glob(pattern) if p.stat().st_mtime >= since]
         return str(max(hits, key=lambda p: p.stat().st_mtime)) if hits else None
 
+    # The order file is offered once, and does not change identity while you are
+    # looking at it. design_plate writes a single-core plate minutes before
+    # build_hedged_plate replaces it in the same slot, so a reader who downloads
+    # when the file first appears gets the interim plate - designed under one
+    # assumed binding core - while the memo goes on to recommend the hedged one.
+    #
+    # So wait for the hedged plate. If the run ends without one (a parent where
+    # only a single core is productive), the single-core plate is the deliverable
+    # and is offered then.
+    order = newest("*_hedged_plate.csv")
+    if order is None and final:
+        order = newest("*_plate.csv")
+
     figs = (newest("*_switch.png"), newest("*_funnel.png"), newest("*_dose.png"),
-            newest("*_window.png"), newest("*_plate.png"), newest("*_plate.csv"),
+            newest("*_window.png"), newest("*_plate.png"), order,
             _gallery(since), _comparison(since))
     # Same lockstep problem as _panels, one step earlier: removing the simulated
     # results file left this returning nine values into an eight-value unpack,
@@ -515,7 +528,7 @@ async def respond(target: str, history: list, session: str,
     # and the reasoning is the part that explains why the numbers were accepted.
     await asyncio.to_thread(_archive, target, memo, trace)
     yield history, "", gr.update(), *_panels(
-        await asyncio.to_thread(_figures, target, run_began))
+        await asyncio.to_thread(_figures, target, run_began, True))
 
 
 def _target_from_plate(out_dir: Path) -> str:
