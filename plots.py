@@ -126,8 +126,29 @@ def design_window(rows: list[dict], picked: set[str], path: str,
     ok = [r for r in rows if r["passes"] and r["name"] not in picked]
     sel = [r for r in rows if r["name"] in picked]
 
-    ax.axhspan(-6, 1.0, color=BAND, zorder=0)
-    ax.text(ax.get_xlim()[0], 0.85, "  tail also binds elsewhere — rejected",
+    # Which criterion the vertical axis shows depends on the architecture, and
+    # the figure has to follow the design rather than assume one.
+    #
+    # An intrinsically destabilised construct carries no tail, so there is no
+    # off-target tail binding to score and specificity_margin is None for every
+    # row. Plotting it produced a panel with a legend, axes, a shaded rejection
+    # band and not one data point — a figure that looks finished and shows
+    # nothing, which is worse than a missing one.
+    has_specificity = any(r.get("specificity_margin") is not None for r in rows)
+    y_key = "specificity_margin" if has_specificity else "dimer_margin"
+    if has_specificity:
+        y_label = "specificity margin (kcal/mol)"
+        band_lo, band_hi = -6.0, 1.0
+        band_text = "  tail also binds elsewhere — rejected"
+    else:
+        # No tail to mis-bind; what still eliminates a design is self-dimerising
+        # more strongly than it folds.
+        y_label = "dimer margin (kcal/mol)"
+        band_lo, band_hi = min(r["dimer_margin"] for r in rows) - 0.5, -6.0
+        band_text = "  dimerises more strongly than it folds — rejected"
+
+    ax.axhspan(band_lo, band_hi, color=BAND, zorder=0)
+    ax.text(ax.get_xlim()[0], band_hi - 0.15, band_text,
             fontsize=8, color=INK_SOFT, va="top", zorder=1)
 
     for group, colour, size, label, z in (
@@ -136,7 +157,7 @@ def design_window(rows: list[dict], picked: set[str], path: str,
             (sel, PICKED, 34, f"on the plate ({len(sel)})", 4)):
         if not group:
             continue
-        ax.scatter([r["dd_g"] for r in group], [r["specificity_margin"] for r in group],
+        ax.scatter([r["dd_g"] for r in group], [r[y_key] for r in group],
                    s=size, c=colour, edgecolors="none", label=label, zorder=z,
                    alpha=0.75 if colour is DROP else 1.0)
 
@@ -156,8 +177,8 @@ def design_window(rows: list[dict], picked: set[str], path: str,
     ax.text(0, ax.get_ylim()[1], " tail and fold balanced", fontsize=8,
             color=INK_SOFT, va="top")
 
-    _frame(ax, "ddG — tail duplex minus fold (kcal/mol)",
-           "specificity margin (kcal/mol)")
+    _frame(ax, "ddG — tail duplex minus fold (kcal/mol)" if has_specificity
+           else "ddG — cost of opening the binding core (kcal/mol)", y_label)
     ax.set_title("What the plate covers", fontsize=12, color=INK,
                  fontweight="bold", loc="left", pad=10)
     if ax.get_legend_handles_labels()[0]:
@@ -169,24 +190,47 @@ def design_window(rows: list[dict], picked: set[str], path: str,
     # tail length and linker, sized by how many mismatches it carries; the
     # passing-but-unselected candidates sit behind them, and the clustering is
     # the point — ranking would have taken eleven copies of one mechanism.
+    # The levers differ by architecture too. A competing tail varies in length,
+    # linker and register; an intrinsically destabilised design has no tail at
+    # all and varies by where it is truncated and how many bases are mutated.
+    # Labelling the axes "tail length" and "linker" for the second kind drew 88
+    # points at the origin scattered only by their own jitter, under axis
+    # numbers running -0.10 to 0.10 nt.
+    #
+    # So pick the axes from the levers that actually vary, and if fewer than two
+    # do, draw nothing and say why.
     passing = [r for r in rows if r["passes"]]
-    if passing and all(r.get("tail_len") is not None for r in passing):
+    LEVERS = [("tail_len", "tail length (nt)"), ("linker", "linker (nt)"),
+              ("register", "truncation start (nt)"),
+              ("n_mismatch", "point mutations")]
+    varying = [(k, lab) for k, lab in LEVERS
+               if len({r.get(k) for r in passing if r.get(k) is not None}) > 1]
+
+    if passing and len(varying) >= 2:
+        (xk, xlab), (yk, ylab) = varying[0], varying[1]
+        size_key = next((k for k, _ in varying[2:]), None)
         jitter = 0.12
         rng = __import__("random").Random(7)
         for group, colour, size, z in ((passing, KEEP, 12, 2), (sel, PICKED, 46, 3)):
-            xs = [r["tail_len"] + rng.uniform(-jitter, jitter) for r in group]
-            ys = [r["linker"] + rng.uniform(-jitter, jitter) for r in group]
-            sizes = [size * (1 + 0.35 * (r["n_mismatch"] or 0)) for r in group]
+            xs = [r[xk] + rng.uniform(-jitter, jitter) for r in group]
+            ys = [r[yk] + rng.uniform(-jitter, jitter) for r in group]
+            sizes = [size * (1 + 0.35 * ((r.get(size_key) or 0) if size_key else 0))
+                     for r in group]
             ax2.scatter(xs, ys, s=sizes, c=colour, edgecolors="none",
                         alpha=0.55 if colour is KEEP else 1.0, zorder=z)
-        combos = len({(r["register"], r["tail_len"], r["n_mismatch"], r["linker"])
-                      for r in sel})
-        _frame(ax2, "tail length (nt)", "linker (nt)")
+        combos = len({tuple(r.get(k) for k, _ in varying) for r in sel})
+        _frame(ax2, xlab, ylab)
         ax2.set_title(f"How they differ — {combos} mechanisms in {len(sel)} wells",
                       fontsize=11, color=INK, fontweight="bold", loc="left",
                       pad=10)
-        ax2.text(0.0, -0.16, "marker size = mismatches carried",
-                 transform=ax2.transAxes, fontsize=8.5, color=INK_SOFT)
+        if size_key:
+            ax2.text(0.0, -0.16, f"marker size = {dict(LEVERS)[size_key]}",
+                     transform=ax2.transAxes, fontsize=8.5, color=INK_SOFT)
+    else:
+        ax2.axis("off")
+        ax2.text(0.5, 0.5, "Only one design lever varies here,\nso there is "
+                 "nothing to plot against it.", transform=ax2.transAxes,
+                 ha="center", va="center", fontsize=10, color=INK_SOFT)
 
     fig.tight_layout()
     fig.savefig(path, dpi=170, facecolor=SURFACE)

@@ -327,12 +327,20 @@ def _write_demo_results(plate_csv: Path) -> Path | None:
         import workspace
         demo_dir = workspace.ROOT / "demo"
         demo_dir.mkdir(parents=True, exist_ok=True)
-        return simulated_for(plate_csv, demo_dir)
+        # One file, one name, overwritten every time. Naming it after the target
+        # left three side by side - the agent designs under whatever string it
+        # picks, so one run produced SIMULATED_results_IL-6.csv,
+        # SIMULATED_results_interleukin-6.csv and one named after a core span.
+        # Under demo pressure that is a choice between files that look equally
+        # right, and the wrong one still loads: the join is on well position, so
+        # a file from another plate produces a correlation that means nothing.
+        return simulated_for(plate_csv, demo_dir, name="SIMULATED_results.csv")
     except Exception:
         return None            # a demo convenience must never fail a design run
 
 
-def simulated_for(plate_csv: Path, out_dir: Path | None = None) -> Path:
+def simulated_for(plate_csv: Path, out_dir: Path | None = None,
+                  name: str = "") -> Path:
     """Write simulated wet-lab results matching this exact plate.
 
     Only ever called explicitly, by `./run --demo-results`. It used to run
@@ -354,7 +362,8 @@ def simulated_for(plate_csv: Path, out_dir: Path | None = None) -> Path:
                 hypothesis = row["Core hypothesis"]
                 break
     target = plate_csv.stem.replace("_hedged_plate", "").replace("_plate", "")
-    destination = (out_dir or plate_csv.parent) / f"SIMULATED_results_{target}.csv"
+    destination = ((out_dir or plate_csv.parent)
+                   / (name or f"SIMULATED_results_{target}.csv"))
     return feedback.example_results(plate_csv, destination,
                                     winning_hypothesis=hypothesis)
 

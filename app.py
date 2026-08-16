@@ -379,6 +379,7 @@ async def respond(target: str, history: list, session: str,
         yield history, "", *_panels(BLANK)
         return
 
+    workspace.use_target(target)
     history = history + [{"role": "user", "content": target}]
     trace: list[str] = []
     memo = ""
@@ -398,6 +399,7 @@ async def respond(target: str, history: list, session: str,
             # this task too - a new task does not inherit the caller's context
             # automatically once it is created by create_task.
             workspace.use(session)
+            workspace.use_target(target)
             async for item in analyse(target,
                                       str(results_path) if results_path else None):
                 await queue.put(item)

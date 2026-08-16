@@ -41,3 +41,37 @@ def use(session_id: str) -> Path:
 
 def reset() -> None:
     _current.set(None)
+
+
+# The agent names its own target argument, and it varies it freely within one
+# run: a single IL-6 query produced plates, figures and demo files under "IL-6",
+# "interleukin-6" and "IL-6 core16-30". Those are one biomarker, and treating
+# them as three identities split the outputs three ways and, because the target
+# is part of the design cache key, made every repeat recompute from scratch.
+#
+# So the session pins the name the user typed, and everything downstream uses it.
+_target: contextvars.ContextVar[str] = contextvars.ContextVar("target", default="")
+
+_ANNOTATION = re.compile(
+    r"\s*(?:\(|\[).*$"                      # "IL-6 (19mer, Kd unknown)"
+    r"|\s+core\s*\d+\s*[-–]\s*\d+\s*$"   # "IL-6 core16-30"
+    r"|\s+\d+\s*mer\s*$"                    # "IL-6 31mer"
+    r"|\s*[-–—]\s*(?:parent|aptamer|adaptor).*$",
+    re.IGNORECASE)
+
+
+def canonical(raw: str) -> str:
+    """Strip the design annotations the agent appends to a biomarker name."""
+    name = _ANNOTATION.sub("", (raw or "").strip()).strip(" -–—,;:/")
+    return name or (raw or "").strip()
+
+
+def use_target(name: str) -> str:
+    """Pin this session's target to what the user actually asked for."""
+    _target.set(canonical(name))
+    return _target.get()
+
+
+def target_name(fallback: str = "") -> str:
+    """The session's target, or the cleaned-up version of what was passed."""
+    return _target.get() or canonical(fallback)

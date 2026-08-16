@@ -253,7 +253,8 @@ async def design_plate(args: dict) -> dict:
                              "or omit kd_nM and affinity-derived output will be "
                              "omitted rather than estimated."})
     try:
-        result = design.run(seq, (start, end), kd_M, target=args["target"],
+        result = design.run(seq, (start, end), kd_M,
+                            target=workspace.target_name(args["target"]),
                             kd_source=kd_source)
     except ValueError as exc:
         # Reaches the agent as something it can act on - drop the bad field and
@@ -367,7 +368,8 @@ async def test_core_sensitivity(args: dict) -> dict:
     if len(seq) < 16:
         return _ok({"error": "need the parent sequence, at least 16 nt"})
     result = await anyio.to_thread.run_sync(
-        lambda: sensitivity.run(seq, target=args.get("target") or "target"))
+        lambda: sensitivity.run(
+            seq, target=workspace.target_name(args.get("target") or "target")))
     result.pop("robust_sequences", None)          # too long for a tool result
     return _ok(result)
 
@@ -388,12 +390,13 @@ async def build_hedged_plate(args: dict) -> dict:
         return _ok({"error": "need the parent sequence, at least 16 nt"})
 
     result = await anyio.to_thread.run_sync(
-        lambda: hedged.run(seq, target=args.get("target") or "target"))
+        lambda: hedged.run(
+            seq, target=workspace.target_name(args.get("target") or "target")))
     if result.get("error"):
         return _ok({"error": result["error"]})
 
     out_dir = workspace.current()
-    safe = (args.get("target") or "target").replace("/", "_")
+    safe = workspace.target_name(args.get("target") or "target").replace("/", "_")
     csv_path = plate.write_order(result["wells"], out_dir / f"{safe}_hedged_plate.csv")
     design._write_demo_results(csv_path)
     return _ok({
