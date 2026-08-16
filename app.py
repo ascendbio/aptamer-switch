@@ -47,6 +47,16 @@ You get 96 wells tiling the usable design window, with controls, randomised
 positions, and a vendor order file — a plate built to locate the optimum in one
 wet-lab round."""
 
+NO_DOSE = """**What the sensor can actually see** — not shown.
+
+No paper reports a binding affinity for this parent, and the whole content of a
+dose-response curve is *where it sits* on the concentration axis, which comes
+from Kd. Drawn from a placeholder it would be a picture of an assumption, so it
+is left out rather than filled in.
+
+Everything else on the plate is unaffected: ddG, specificity and dimer margins
+are computed from sequence and never touch affinity."""
+
 EXPLAIN = {
     "funnel": """
 **Every candidate considered, and what removed each one.**
@@ -141,6 +151,17 @@ def _figures(target: str, since: float = 0.0) -> tuple:
 
 BLANK = (None, None, None, None, None, [], None)
 
+
+def _panels(figs: tuple):
+    """Figure outputs plus the visibility of the box each one lives in."""
+    funnel, dose, window, plate = figs[0], figs[1], figs[2], figs[3]
+    return (*figs,
+            gr.update(visible=bool(funnel)),
+            gr.update(visible=bool(dose)),
+            gr.update(visible=not dose and bool(plate)),   # explain the absence
+            gr.update(visible=bool(window)),
+            gr.update(visible=bool(plate)))
+
 COMPARE_COLUMNS = ["parent", "architecture", "library", "in window", "passing",
                    "wells", "blocked by", "best |ddG|"]
 
@@ -227,14 +248,14 @@ TICK_SECONDS = 1.0
 async def respond(target: str, history: list):
     target = (target or "").strip()
     if not target:
-        yield history, "", *BLANK
+        yield history, "", *_panels(BLANK)
         return
 
     history = history + [{"role": "user", "content": target}]
     trace: list[str] = []
     memo = ""
     history.append({"role": "assistant", "content": "_Working…_"})
-    yield history, "", *BLANK
+    yield history, "", *_panels(BLANK)
 
     # The agent is consumed through a queue rather than iterated directly, so the
     # page can keep updating while a tool is still running. A literature search
@@ -275,7 +296,7 @@ async def respond(target: str, history: list):
                 waited = time.monotonic() - started
                 history[-1] = {"role": "assistant",
                                "content": render(f"   … working, {waited:.0f}s")}
-                yield history, "", *figures
+                yield history, "", *_panels(figures)
                 continue
 
             if item is None:
@@ -299,19 +320,19 @@ async def respond(target: str, history: list):
             # is mid-run — the reader gets the plate while the memo is still
             # being written.
             figures = await asyncio.to_thread(_figures, target, run_began)
-            yield history, "", *figures
+            yield history, "", *_panels(figures)
     except Exception as exc:
         task.cancel()
         history[-1] = {"role": "assistant",
                        "content": f"{chr(10).join(trace)}\n\n**Failed:** `{exc}`"}
-        yield history, "", *BLANK
+        yield history, "", *_panels(BLANK)
         return
 
     # Persist the memo and trace. design_plate already archived the numbers, but
     # the agent's written reasoning lived only in this browser tab until now —
     # and the reasoning is the part that explains why the numbers were accepted.
     await asyncio.to_thread(_archive, target, memo, trace)
-    yield history, "", *await asyncio.to_thread(_figures, target, run_began)
+    yield history, "", *_panels(await asyncio.to_thread(_figures, target, run_began))
 
 
 def _archive(target: str, memo: str, trace: list[str]) -> None:
@@ -341,21 +362,31 @@ with gr.Blocks(title="Aptamer switch design") as demo:
             # negative ddG means, why a well can pass on rank and still be
             # rejected — and a reader who has to ask is a reader who will not
             # trust the plate.
-            funnel_img = gr.Image(label="From library to plate", height=200)
-            with gr.Accordion("What am I looking at?", open=False):
-                gr.Markdown(EXPLAIN["funnel"])
+            # Each panel is hidden until its figure exists. An empty image frame
+            # reads as a broken tool; the reason a figure is absent is
+            # information, and belongs where the figure would have been rather
+            # than inside a collapsed accordion nobody opens.
+            with gr.Column(visible=False) as funnel_box:
+                funnel_img = gr.Image(label="From library to plate", height=200)
+                with gr.Accordion("What am I looking at?", open=False):
+                    gr.Markdown(EXPLAIN["funnel"])
 
-            dose_img = gr.Image(label="What the sensor can actually see", height=250)
-            with gr.Accordion("What am I looking at?", open=False):
-                gr.Markdown(EXPLAIN["dose"])
+            with gr.Column(visible=False) as dose_box:
+                dose_img = gr.Image(label="What the sensor can actually see",
+                                    height=250)
+                with gr.Accordion("What am I looking at?", open=False):
+                    gr.Markdown(EXPLAIN["dose"])
+            dose_absent = gr.Markdown(NO_DOSE, visible=False)
 
-            window_img = gr.Image(label="Switching vs specificity", height=260)
-            with gr.Accordion("What am I looking at?", open=False):
-                gr.Markdown(EXPLAIN["window"])
+            with gr.Column(visible=False) as window_box:
+                window_img = gr.Image(label="Switching vs specificity", height=260)
+                with gr.Accordion("What am I looking at?", open=False):
+                    gr.Markdown(EXPLAIN["window"])
 
-            plate_img = gr.Image(label="The plate", height=250)
-            with gr.Accordion("What am I looking at?", open=False):
-                gr.Markdown(EXPLAIN["plate"])
+            with gr.Column(visible=False) as plate_box:
+                plate_img = gr.Image(label="The plate", height=250)
+                with gr.Accordion("What am I looking at?", open=False):
+                    gr.Markdown(EXPLAIN["plate"])
 
     # Every candidate the agent assessed, not only the one it settled on. A
     # rejected parent's funnel is often the more informative figure: it shows
@@ -386,7 +417,8 @@ with gr.Blocks(title="Aptamer switch design") as demo:
     for trigger in (box.submit, send.click):
         trigger(respond, [box, chat],
                 [chat, box, funnel_img, dose_img, window_img, plate_img, order,
-                 gallery, compare])
+                 gallery, compare,
+                 funnel_box, dose_box, dose_absent, window_box, plate_box])
 
 
 if __name__ == "__main__":
