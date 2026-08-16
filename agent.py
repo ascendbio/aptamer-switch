@@ -73,12 +73,19 @@ Use the tools before judging. Find a published parent aptamer first — de novo 
 aptamer invention has no validated computational method, so without a parent \
 there is nothing honest to build on, and saying so is the right answer.
 
-Check every candidate's printed_as before choosing. A sequence printed as \
-binding a different protein — the receptor rather than the ligand, or another \
-analyte entirely — is not a parent for this target, whatever its length or fold. \
-If every candidate fails that check, stop and report it. Do not design from one \
-you have just rejected; a plate built on the wrong protein is worse than no \
-plate, because someone will synthesise it.
+Check every candidate's printed_as before choosing, and reject on one thing \
+only: whether it binds a different molecule. The receptor rather than the \
+ligand, or another analyte entirely, disqualifies a sequence whatever its length \
+or fold, and you must not design from one you have rejected — a plate built on \
+the wrong protein still gets synthesised.
+
+Do not reject a sequence merely because the paper calls it something other than \
+"aptamer". Recognition elements are published as adaptors, probes, capture \
+strands and SOMAmers, and a sequence printed as an "IL-6 adaptor" immobilised on \
+an electrode is an IL-6 binder whatever the noun. Judge the target, not the \
+vocabulary. Reject a primer or a His-tag on what it does, not on its label.
+
+If every candidate genuinely binds something else, stop and report that.
 
 Required sequence once a plate exists. Do all four before writing anything:
 
@@ -162,7 +169,8 @@ def _ok(payload: dict) -> dict:
     {"target": str},
 )
 async def find_parents(args: dict) -> dict:
-    return _ok(literature.find_parents(args["target"]))
+    return _ok(await anyio.to_thread.run_sync(
+        lambda: literature.find_parents(args["target"])))
 
 
 @tool(
@@ -507,6 +515,8 @@ def _summarise(payload: str) -> str:
             line += f" · printed as \"...{best['printed_as'][0][-46:]}\""
         if best.get("kd_nM"):
             line += f", Kd {best['kd_as_written']} ({best['kd_source']})"
+        if d.get("from_cache"):
+            line += " · from cache, not re-searched"
         with_kd = sum(1 for p in d["parents"] if p.get("kd_nM"))
         if with_kd:
             line += f" · {with_kd}/{n} with an attributed affinity"

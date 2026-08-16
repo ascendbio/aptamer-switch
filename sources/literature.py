@@ -37,6 +37,9 @@ import subprocess
 import time
 
 import requests
+
+import store
+import workspace
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -106,6 +109,7 @@ class Parent:
     kd_notes: list[str] = field(default_factory=list)
     paper_affinities: list[str] = field(default_factory=list)
     contexts: list[str] = field(default_factory=list)
+    attribution: str = "same-paragraph"
 
     @property
     def corroboration(self) -> int:
@@ -323,7 +327,11 @@ def _name_variants(target: str) -> list[str]:
 
 
 # 5'-GGTGG... or 5′ GG TGG CAG..., with or without spaces between bases.
-_PRIMED_RE = re.compile(r"5\s*[\u2032\u2019'`]\s*[-\u2013\u2014]?\s*"
+# Papers mark the 5' end with any of: prime, apostrophe, right single quote,
+# backtick, acute accent, grave. PMC10798920 uses an acute (5´-) and its IL-6
+# aptamer was invisible to a pattern that accepted only the first four.
+PRIME_CHARS = "\u2032\u2019\u00b4\u0060'`\u02bc"
+_PRIMED_RE = re.compile(rf"5\s*[{PRIME_CHARS}]\s*[-\u2013\u2014]?\s*"
                         r"((?:[ACGTUacgtu][ \t]?){15,})")
 _BARE_RE = re.compile(r"(?<![A-Za-z])((?:[ACGTU]){18,})(?![A-Za-z])")
 # Affinity is written many ways and rarely sits beside the sequence: sequences
@@ -338,7 +346,7 @@ _KD_RE = re.compile(
 _NAME_RE = re.compile(r"\b([A-Z][A-Za-z]{1,10}[- ]?\d{1,3}(?:\.\d)?|[A-Z]{2,5}\d{1,3})\b")
 
 
-SEQ_CONTEXT_PATTERN = "5[\u2032\u2019'`][ -]*(?:[ACGTacgt][ ]?){15,}"
+SEQ_CONTEXT_PATTERN = "5[\u2032\u2019\u00b4\u0060'`][ -]*(?:[ACGTacgt][ ]?){15,}"
 # Every matched paper is read. At 25 the pass covered 28 of 53 papers and which
 # 28 depended on ordering, so the one paper carrying the usable IL-6 parent was
 # usually missed — and the agent then reported, correctly for what it had been
@@ -371,13 +379,26 @@ def _sequences_in(para: str, target_re: re.Pattern) -> list[tuple[str, str, str,
         if not MIN_LEN <= len(raw) <= MAX_LEN:
             continue
         lead = para[max(0, m.start() - 90):m.start()]
+        # Attribute to the nearest label, not to the paragraph. One sentence in
+        # PMC10798920 reads "aptamers for PCT (<seq>) and IL-6 (<seq>)": a
+        # paragraph-level check accepts the first sequence for IL-6 and drops the
+        # second, which is the actual IL-6 aptamer. Requiring the target inside
+        # the immediate lead-in gets both right.
+        adjacent = bool(target_re.search(lead))
         names = _NAME_RE.findall(lead)
         # Keep the sentence fragment the sequence was printed in. A bare string
         # of bases cannot be told apart from a qPCR primer, and the paper almost
         # always says which within a few words of it - "IL-6 adaptor", "forward
         # primer", "selected aptamer". Without it the caller is guessing.
-        context = re.sub(r"\s+", " ", lead).strip()[-90:]
-        found.append((raw, names[-1] if names else "", kd_text, context))
+        # Both sides of the sequence. What follows it often says what it is for
+        # — "was commissioned by", "was immobilised on the electrode" — and a
+        # lead-in alone made an IL-6 recognition element read as unidentifiable
+        # because the paper happened to call it an adaptor rather than an aptamer.
+        after = para[m.end():m.end() + 70]
+        context = (re.sub(r"\s+", " ", lead).strip()[-80:] + " ⟨SEQ⟩ "
+                   + re.sub(r"\s+", " ", after).strip())
+        found.append((raw, names[-1] if names else "", kd_text, context,
+                      "adjacent" if adjacent else "same-paragraph"))
     return found
 
 
@@ -408,7 +429,7 @@ def _extract_from_paper(doc_id: str, target_re: re.Pattern) -> list[tuple[str, s
     given, is what returned anti-HIV-integrase aptamers for an IL-6 query: those
     papers do mention IL-6, several sections away from the sequence.
     """
-    out, _, rc = _run(["grep", "-n", "5[\u2032\u2019'`]|[ACGT]{18,}",
+    out, _, rc = _run(["grep", "-n", "5[\u2032\u2019\u00b4\u0060'`]|[ACGT]{18,}",
                        f"/papers/{doc_id}/content.lines"])
     if rc != 0:
         return None                      # a failed read, distinct from an empty one
@@ -418,9 +439,26 @@ def _extract_from_paper(doc_id: str, target_re: re.Pattern) -> list[tuple[str, s
     return found
 
 
-def find_parents(target: str, max_papers: int = 60) -> dict:
-    """Published aptamer sequences for `target`, with corroboration counts."""
+def find_parents(target: str, max_papers: int = 60, refresh: bool = False) -> dict:
+    """Published aptamer sequences for `target`, with corroboration counts.
+
+    Cached to disk. The corpus is fixed and extraction is deterministic, so the
+    same target gives the same answer and re-deriving it costs two minutes of a
+    five-minute demo. The cache is shared across sessions rather than per-user —
+    it is a property of the literature, not of who asked.
+
+    Failures are never cached. A rate-limited corpus search that got written to
+    disk would keep returning "nothing found" long after the service recovered,
+    which is the false-negative problem made permanent.
+    """
     variants = _name_variants(target)
+    key = store.cache_key(kind="literature", variants=sorted(variants),
+                          cap=PER_PAPER_CAP, top=TOP_N)
+    if not refresh:
+        hit = store.cache_get(workspace.ROOT, key)
+        if hit is not None:
+            hit["from_cache"] = True
+            return hit
     alt = "|".join(re.escape(v) for v in variants)
     # 60 characters, not 14: papers introduce an aptamer at a clause's distance
     # from its target ("an aptamer previously selected against human IL-6"), and
@@ -480,10 +518,10 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
     if bulk_rc == 0:
         for doc_id, para in _paragraphs(bulk):
             hits = _sequences_in(para, target_re)
-            for seq, name, kd, ctx in hits:
+            for seq, name, kd, ctx, attr in hits:
                 _absorb({"sequence": seq, "aptamer_name": name, "kd": kd,
-                         "chemistry": "DNA", "context": ctx},
-                        doc_id, by_seq, order)
+                         "chemistry": "DNA", "context": ctx,
+                         "attribution": attr}, doc_id, by_seq, order)
             if hits:
                 covered.add(doc_id)
 
@@ -498,9 +536,10 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
         if hits is None:
             failed += 1
             continue
-        for seq, name, kd, ctx in hits:
+        for seq, name, kd, ctx, attr in hits:
             _absorb({"sequence": seq, "aptamer_name": name, "kd": kd,
-                     "chemistry": "DNA", "context": ctx}, doc_id, by_seq, order)
+                     "chemistry": "DNA", "context": ctx,
+                     "attribution": attr}, doc_id, by_seq, order)
 
     # One extra pass over just the papers that produced a candidate, to pick up
     # affinities stated outside the sequence's own paragraph.
@@ -526,10 +565,12 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
         # uncharacterised sequence above the one with a sensor built on it.
         parents = sorted(
             (by_seq[k] for k in order),
-            key=lambda p: (-p.corroboration, not p.kd_notes, order.index(p.sequence)))
-        return {"target": target, "searched_as": variants, "n_papers": n_papers,
+            key=lambda p: (p.attribution != "adjacent", -p.corroboration,
+                           not p.kd_notes, order.index(p.sequence)))
+        result = {"target": target, "searched_as": variants, "n_papers": n_papers,
                 "papers_read": len(covered) + probed - failed,
                 "papers_failed": failed,
+                "from_cache": False,
                 "total_sequences_matched": len(parents),
                 "extraction": "deterministic regex, target named in the same "
                               "paragraph as the sequence",
@@ -537,6 +578,9 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
                           "Check that a candidate's paper is really about this "
                           "target before designing from it.",
                 "parents": [_as_dict(p) for p in parents[:TOP_N]]}
+        # Only a search that actually found something is worth keeping.
+        store.cache_put(workspace.ROOT, key, result)
+        return result
 
     # Deterministic extraction found nothing. Only now is the reader worth
     # trying, and only if it is actually answering.
@@ -637,6 +681,8 @@ def _absorb(entry: dict, doc_id: str, by_seq: dict, order: list) -> None:
         name = str(entry.get("aptamer_name", "")).strip()
         if name and name not in p.names:
             p.names.append(name)
+        if entry.get("attribution") == "adjacent":
+            p.attribution = "adjacent"      # the strongest evidence wins
         ctx = str(entry.get("context", "")).strip()
         if ctx and ctx not in p.contexts:
             p.contexts.append(ctx)
@@ -683,6 +729,9 @@ def _as_dict(p: Parent) -> dict:
         # What the paper says immediately before the sequence — the only signal
         # that separates an aptamer from a primer without reading the paper.
         "printed_as": p.contexts[:2],
+        # "adjacent" means the target was named in the words immediately before
+        # the sequence; "same-paragraph" only that both appear nearby.
+        "attribution": p.attribution,
         "reported_kd": p.kd_notes[:4],
         # Ready to hand straight to design_plate, with the paper it came from.
         "kd_nM": kd_nM,
