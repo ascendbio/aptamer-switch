@@ -105,6 +105,7 @@ class Parent:
     names: list[str] = field(default_factory=list)
     kd_notes: list[str] = field(default_factory=list)
     paper_affinities: list[str] = field(default_factory=list)
+    contexts: list[str] = field(default_factory=list)
 
     @property
     def corroboration(self) -> int:
@@ -353,7 +354,7 @@ def _paragraphs(grep_output: str) -> list[tuple[str, str]]:
     return out
 
 
-def _sequences_in(para: str, target_re: re.Pattern) -> list[tuple[str, str, str]]:
+def _sequences_in(para: str, target_re: re.Pattern) -> list[tuple[str, str, str, str]]:
     """Sequences in this paragraph, but only if the target is named in it too."""
     if not target_re.search(para):
         return []
@@ -364,9 +365,14 @@ def _sequences_in(para: str, target_re: re.Pattern) -> list[tuple[str, str, str]
         raw = re.sub(r"[^ACGTUacgtu]", "", m.group(1)).upper()
         if not MIN_LEN <= len(raw) <= MAX_LEN:
             continue
-        lead = para[max(0, m.start() - 60):m.start()]
+        lead = para[max(0, m.start() - 90):m.start()]
         names = _NAME_RE.findall(lead)
-        found.append((raw, names[-1] if names else "", kd_text))
+        # Keep the sentence fragment the sequence was printed in. A bare string
+        # of bases cannot be told apart from a qPCR primer, and the paper almost
+        # always says which within a few words of it - "IL-6 adaptor", "forward
+        # primer", "selected aptamer". Without it the caller is guessing.
+        context = re.sub(r"\s+", " ", lead).strip()[-90:]
+        found.append((raw, names[-1] if names else "", kd_text, context))
     return found
 
 
@@ -387,7 +393,7 @@ def _paper_affinities(doc_id: str) -> list[str]:
     return [m.group(1).strip() for m in _KD_RE.finditer(out)]
 
 
-def _extract_from_paper(doc_id: str, target_re: re.Pattern) -> list[tuple[str, str, str]] | None:
+def _extract_from_paper(doc_id: str, target_re: re.Pattern) -> list[tuple[str, str, str, str]] | None:
     """(sequence, name, kd) triples this paper attributes to the target.
 
     Deterministic: the paragraph is fetched and parsed here rather than handed to
@@ -469,9 +475,10 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
     if bulk_rc == 0:
         for doc_id, para in _paragraphs(bulk):
             hits = _sequences_in(para, target_re)
-            for seq, name, kd in hits:
+            for seq, name, kd, ctx in hits:
                 _absorb({"sequence": seq, "aptamer_name": name, "kd": kd,
-                         "chemistry": "DNA"}, doc_id, by_seq, order)
+                         "chemistry": "DNA", "context": ctx},
+                        doc_id, by_seq, order)
             if hits:
                 covered.add(doc_id)
 
@@ -484,9 +491,9 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
         if hits is None:
             failed += 1
             continue
-        for seq, name, kd in hits:
+        for seq, name, kd, ctx in hits:
             _absorb({"sequence": seq, "aptamer_name": name, "kd": kd,
-                     "chemistry": "DNA"}, doc_id, by_seq, order)
+                     "chemistry": "DNA", "context": ctx}, doc_id, by_seq, order)
 
     # One extra pass over just the papers that produced a candidate, to pick up
     # affinities stated outside the sequence's own paragraph.
@@ -506,8 +513,13 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
         parent.paper_affinities = seen_aff
 
     if by_seq:
-        parents = sorted((by_seq[k] for k in order),
-                         key=lambda p: (-p.corroboration, -len(p.sequence)))
+        # Corroboration first, then whether an affinity was reported for it.
+        # Length was the old tiebreaker and it is meaningless: a 76-mer is not a
+        # better parent than a 31-mer for being longer, and ranking on it put an
+        # uncharacterised sequence above the one with a sensor built on it.
+        parents = sorted(
+            (by_seq[k] for k in order),
+            key=lambda p: (-p.corroboration, not p.kd_notes, order.index(p.sequence)))
         return {"target": target, "searched_as": variants, "n_papers": n_papers,
                 "papers_read": len(covered) + probed - failed,
                 "papers_failed": failed,
@@ -618,6 +630,9 @@ def _absorb(entry: dict, doc_id: str, by_seq: dict, order: list) -> None:
         name = str(entry.get("aptamer_name", "")).strip()
         if name and name not in p.names:
             p.names.append(name)
+        ctx = str(entry.get("context", "")).strip()
+        if ctx and ctx not in p.contexts:
+            p.contexts.append(ctx)
         kd = str(entry.get("kd", "")).strip()
         if kd and kd.lower() not in {"", "none", "not reported", "n/a"} \
                 and kd not in p.kd_notes:
@@ -658,6 +673,9 @@ def _as_dict(p: Parent) -> dict:
         "corroborating_papers": p.corroboration,
         "papers": sorted(set(p.papers)),
         "reported_names": p.names[:4],
+        # What the paper says immediately before the sequence — the only signal
+        # that separates an aptamer from a primer without reading the paper.
+        "printed_as": p.contexts[:2],
         "reported_kd": p.kd_notes[:4],
         # Ready to hand straight to design_plate, with the paper it came from.
         "kd_nM": kd_nM,

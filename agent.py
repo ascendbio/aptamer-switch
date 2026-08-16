@@ -141,7 +141,13 @@ def _ok(payload: dict) -> dict:
     "are computed. affinities_reported_in_papers lists values stated elsewhere "
     "in the same papers; those are not attributed to the sequence, so use one "
     "only after checking the paper says it is that sequence's. Pass the biomarker as it would be written in a paper, "
-    "e.g. 'IL-6' or 'TNF-alpha'. If the result carries search_failed, the "
+    "e.g. 'IL-6' or 'TNF-alpha'. Each parent carries printed_as: the words the "
+    "paper printed immediately before the sequence. READ IT before choosing. A "
+    "bare run of bases cannot be told apart from a qPCR primer or an aptamer "
+    "against a different protein, and this corpus contains both alongside real "
+    "hits — 'aptamers for PCT' is procalcitonin, 'for sIL-6R' is the receptor "
+    "rather than the ligand. If printed_as names another target, discard the "
+    "sequence and say why. If the result carries search_failed, the "
     "extraction service failed and an empty parent list is NOT evidence that no "
     "aptamer exists - say so and retry rather than concluding absence.",
     {"target": str},
@@ -488,6 +494,8 @@ def _summarise(payload: str) -> str:
         line = (f"{n} parent{'s' if n != 1 else ''} from {d.get('n_papers', 0)} "
                 f"papers · best {best['length']} nt {best['chemistry']}, "
                 f"{best['corroborating_papers']} paper(s)")
+        if best.get("printed_as"):
+            line += f" · printed as \"...{best['printed_as'][0][-46:]}\""
         if best.get("kd_nM"):
             line += f", Kd {best['kd_as_written']} ({best['kd_source']})"
         with_kd = sum(1 for p in d["parents"] if p.get("kd_nM"))
