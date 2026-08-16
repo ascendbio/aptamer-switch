@@ -97,10 +97,20 @@ Required sequence once a plate exists. Do all four before writing anything:
                                into a plate the lab can actually synthesise.
   4. read_ledger             — what the design rests on
 
-If the user supplies wet-lab results, call learn_from_results FIRST and let it
-govern the memo. It is the only tool that reports a measured number rather than
-a predicted one: where it disagrees with the design, the measurement wins and
-you should say so plainly.
+If the user supplies wet-lab results, the run is a second round and the sequence
+is already settled. Do this instead of the normal sequence:
+
+  1. learn_from_results   — FIRST, before anything else
+  2. design_plate         — using the parent_sequence it returns
+
+Do NOT call find_parents. The parent is whatever the measured plate was built
+from, the tool hands it back, and searching the literature again costs two
+minutes to re-derive a sequence already in hand.
+
+Place the window using measured_optimum_ddg rather than the default, and if the
+results eliminated a core hypothesis, design on the surviving one. Where the
+measurement disagrees with a prediction the measurement wins — say so plainly,
+and say what the data changed.
 
 Skipping step 3 after a failed sensitivity test leaves the reader with a
 diagnosis and no deliverable, which is the one outcome this tool exists to avoid.
@@ -430,7 +440,41 @@ async def learn_from_results(args: dict) -> dict:
                              f"{designed.name}; check the well column"})
     report = await anyio.to_thread.run_sync(lambda: feedback.analyse(joined))
     report["plate_read"] = designed.name
+
+    # Hand back the parent this plate was built from, so a second round does not
+    # spend two minutes re-searching the literature for a sequence it already
+    # has. Round two is the same molecule with a window placed by measurement.
+    manifest = _manifest_for(designed, out_dir)
+    if manifest:
+        report["parent_sequence"] = manifest.get("parent_sequence")
+        report["core_used"] = manifest.get("core_assumed")
+        report["kd_intrinsic_nM"] = manifest.get("kd_intrinsic_nM")
+        report["next_step"] = (
+            "Design directly from parent_sequence — do NOT search the literature "
+            "again. Place the window on measured_optimum_ddg rather than the "
+            "default, and if one core hypothesis was eliminated use the surviving "
+            "one as core_used.")
     return _ok(report)
+
+
+def _manifest_for(plate_csv: Path, out_dir: Path) -> dict | None:
+    """The run manifest belonging to a plate, matched by target name."""
+    runs = out_dir / "runs"
+    if not runs.exists():
+        return None
+    stem = plate_csv.stem.replace("_hedged_plate", "").replace("_plate", "")
+    candidates = [d for d in runs.iterdir()
+                  if d.is_dir() and d.name.startswith(stem)]
+    if not candidates:
+        candidates = [d for d in runs.iterdir() if d.is_dir()]
+    if not candidates:
+        return None
+    newest = max(candidates, key=lambda d: d.stat().st_mtime)
+    path = newest / "manifest.json"
+    try:
+        return json.loads(path.read_text()) if path.exists() else None
+    except json.JSONDecodeError:
+        return None
 
 
 @tool(

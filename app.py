@@ -472,7 +472,10 @@ with gr.Blocks(title="Aptamer switch design") as demo:
                     "<sub>A CSV with a well column and a signal column — any "
                     "header wording. Uploaded, it is read **before** anything is "
                     "designed, and the measured optimum places the next window "
-                    "instead of the predicted one.</sub>")
+                    "instead of the predicted one. The literature search is "
+                    "skipped: round two uses the parent the measured plate was "
+                    "built from, so a run with results takes about half as "
+                    "long.</sub>")
                 # Written alongside every plate, so it always matches the wells
                 # on screen. Offered here because the join is on well position:
                 # any other file would load and report a meaningless correlation.
