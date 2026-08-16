@@ -46,6 +46,7 @@ from claude_agent_sdk import (
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent / "sources"))
 import design  # noqa: E402
+import sensitivity  # noqa: E402
 import literature  # noqa: E402
 import thermo  # noqa: E402
 
@@ -73,8 +74,9 @@ papers report the same sequence.
 - The funnel: library size, how many survived each criterion, what killed the rest.
 - The single biggest risk, named plainly.
 
-After building a plate, validate it with the independent engine and report
-whether the two agree. A plate filtered on a dimer criterion that only one
+After building a plate, validate it with the independent engine and test it
+against the core assumption, then report both. If the cores share no designs,
+say plainly that the plate is conditional on a guess. A plate filtered on a dimer criterion that only one
 engine supports is not ready to synthesise.
 
 Three things to be precise about, because they are where this analysis goes wrong.
@@ -279,7 +281,29 @@ async def validate_plate(args: dict) -> dict:
     return _ok(payload)
 
 
-TOOLS = [find_parents, assess_parent, design_plate, validate_plate]
+@tool(
+    "test_core_sensitivity",
+    "Re-run the whole design under several plausible binding cores and report "
+    "which candidates reach the plate under all of them. The core is an "
+    "assumption for any parent whose epitope is unmapped, and every ddG rests on "
+    "it. Call after design_plate. Takes about two minutes because the design "
+    "runs once per core. Designs selected under every core do not depend on the "
+    "guess; if the cores share none, the plate is an artefact of the assumption "
+    "and should not be ordered on it.",
+    {"sequence": str, "target": str},
+)
+async def test_core_sensitivity(args: dict) -> dict:
+    seq = (args.get("sequence") or "").strip().upper()
+    if len(seq) < 16:
+        return _ok({"error": "need the parent sequence, at least 16 nt"})
+    result = await anyio.to_thread.run_sync(
+        lambda: sensitivity.run(seq, target=args.get("target") or "target"))
+    result.pop("robust_sequences", None)          # too long for a tool result
+    return _ok(result)
+
+
+TOOLS = [find_parents, assess_parent, design_plate, validate_plate,
+         test_core_sensitivity]
 TOOL_NAMES = [f"mcp__{SERVER}__{t.name}" for t in TOOLS]
 
 LABELS = {
@@ -287,6 +311,7 @@ LABELS = {
     "assess_parent": "Folding the parent aptamer",
     "design_plate": "Designing, scoring and laying out the plate",
     "validate_plate": "Re-scoring the plate with an independent engine",
+    "test_core_sensitivity": "Testing the plate against the core assumption",
 }
 
 
@@ -340,6 +365,14 @@ def _summarise(payload: str) -> str:
         kind = "G-quadruplex" if d["core_is_quadruplex"] else "Watson-Crick"
         trust = "modellable" if d["opening_energy_trustworthy"] else "opening energy NOT reliable"
         return f"{kind} fold, MFE {d['mfe']} kcal/mol · {trust}"
+
+    if "cores_tested" in d:
+        every = d.get("designs_selected_under_every_core")
+        return (f"{d['cores_producing_a_plate']}/{len(d['cores_tested'])} cores "
+                f"yield a plate · {d['designs_selected_under_any_core']} designs "
+                f"across them · "
+                + (f"{every} survive every core" if every is not None
+                   else "too few productive cores to test the assumption"))
 
     if d.get("validation_unavailable"):
         return "independent validation unavailable (proto-tools not installed)"

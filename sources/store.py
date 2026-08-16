@@ -140,6 +140,13 @@ def save_memo(run_dir: Path, target: str, memo: str, trace: list[str]) -> Path:
     return path
 
 
+def latest_run(out_dir: Path) -> Path | None:
+    """Newest run directory of any target."""
+    runs = out_dir / RUNS
+    dirs = [d for d in runs.iterdir() if d.is_dir()] if runs.exists() else []
+    return max(dirs, key=lambda d: d.stat().st_mtime) if dirs else None
+
+
 def latest(out_dir: Path, target: str) -> Path | None:
     """Most recent run directory for a target, if any."""
     safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in target)

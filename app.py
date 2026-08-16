@@ -24,6 +24,7 @@ import gradio as gr
 from agent import analyse
 
 sys.path.insert(0, str(Path(__file__).parent / "sources"))
+import ledger  # noqa: E402
 import store  # noqa: E402
 
 OUT = Path(__file__).parent / "out"
@@ -156,7 +157,11 @@ def _panels(figs: tuple):
     """Figure outputs plus the visibility of the box each one lives in."""
     funnel, dose, window, plate = figs[0], figs[1], figs[2], figs[3]
     csv, gallery_items, table = figs[4], figs[5], figs[6]
-    return (*figs,
+    # Built from the newest manifest, so the ledger describes the plate on screen
+    # rather than a standing description of the tool.
+    latest = store.latest_run(OUT)
+    text = ledger.build(latest / "manifest.json") if latest and table else ""
+    return (*figs, text,
             gr.update(visible=bool(funnel)),
             gr.update(visible=bool(dose)),
             gr.update(visible=not dose and bool(plate)),   # explain the absence
@@ -167,7 +172,8 @@ def _panels(figs: tuple):
             # to compare; the gallery only once a second parent exists, since
             # with one it merely repeats the panels above.
             gr.update(visible=bool(table)),
-            gr.update(visible=len(gallery_items or []) > 4))
+            gr.update(visible=len(gallery_items or []) > 4),
+            gr.update(visible=bool(text)))
 
 COMPARE_COLUMNS = ["parent", "architecture", "library", "in window", "passing",
                    "wells", "blocked by", "best |ddG|"]
@@ -412,6 +418,14 @@ with gr.Blocks(title="Aptamer switch design") as demo:
         compare = gr.Dataframe(headers=COMPARE_COLUMNS, wrap=True,
                                interactive=False)
 
+    # The ledger is last on the page and first in importance: a reader deciding
+    # whether to spend money on ninety-six oligos needs to know which numbers
+    # were measured, which were chosen, and what was tried and did not work.
+    with gr.Column(visible=False) as ledger_box:
+        with gr.Accordion("What this plate rests on — measured, assumed, and "
+                          "tested-and-rejected", open=False):
+            ledger_md = gr.Markdown()
+
     with gr.Column(visible=False) as gallery_box:
         with gr.Accordion("Every parent evaluated in this run — click any figure "
                           "to enlarge", open=False):
@@ -430,7 +444,7 @@ with gr.Blocks(title="Aptamer switch design") as demo:
                 [chat, box, funnel_img, dose_img, window_img, plate_img, order,
                  gallery, compare,
                  funnel_box, dose_box, dose_absent, window_box, plate_box,
-                 order, compare_box, gallery_box])
+                 order, compare_box, gallery_box, ledger_md, ledger_box])
 
 
 if __name__ == "__main__":

@@ -232,8 +232,10 @@ def assess_all(variants, parent: str, core: tuple[int, int],
     out = []
     for v in variants:
         window = parent[v.register[0] - 1:v.register[1]]
+        # Fold each variant against its own core span. A truncated variant does
+        # not share the parent's numbering.
         a = assess(v.sequence, parent, v.tail, window, v.dd_g,
-                   kd_intrinsic_M, clinical_M, core)
+                   kd_intrinsic_M, clinical_M, v.fold_core or core)
         row = {"name": v.name, "sequence": v.sequence, "family": v.family,
                "tail": v.tail, "tail_len": len(v.tail), "linker": v.linker,
                "n_mismatch": v.n_mismatch, "register": v.register[0], **asdict(a)}

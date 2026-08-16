@@ -69,6 +69,12 @@ class Variant:
     dg_duplex: float = 0.0   # tail against its target window
     dg_fold: float = 0.0     # the folded parent it must beat
     dd_g: float = 0.0        # the competition; near zero is the design window
+    # Which span to fold this construct against. The tail architecture appends
+    # to the parent, so the parent's own core indices still apply; intrinsic
+    # variants are truncations, and the core moves with the trimmed 5' end.
+    # Passing the parent's core to a shortened variant asks for residues past
+    # the end of the molecule.
+    fold_core: tuple[int, int] | None = None
     trustworthy: bool = True
     notes: list[str] = field(default_factory=list)
 
@@ -166,7 +172,8 @@ def library(parent: str, core: tuple[int, int],
                                   else "mismatch" if mm else "linker")
                         out.append(Variant(
                             name="", sequence=seq, family=family,
-                            register=(start, core_end), tail=tail, linker=linker,
+                            register=(start, core_end), fold_core=core,
+                            tail=tail, linker=linker,
                             n_mismatch=mm, dg_duplex=dg_dup, dg_fold=dg_fold,
                             dd_g=round(dg_dup - dg_fold, 2),
                             trustworthy=folded.trustworthy,
@@ -254,7 +261,7 @@ def intrinsic_library(parent: str, core: tuple[int, int]) -> list[Variant]:
             return
         out.append(Variant(
             name="", sequence=seq, family=family, register=(lo, hi),
-            tail="", linker=0, n_mismatch=n_mm,
+            fold_core=(lo, hi), tail="", linker=0, n_mismatch=n_mm,
             dg_duplex=0.0, dg_fold=f.mfe, dd_g=round(f.dg_open, 2),
             trustworthy=True,
             notes=[f"architecture=intrinsic, dG_open {f.dg_open}"]))
