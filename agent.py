@@ -71,6 +71,19 @@ Use the tools before judging. Find a published parent aptamer first — de novo 
 aptamer invention has no validated computational method, so without a parent \
 there is nothing honest to build on, and saying so is the right answer.
 
+Required sequence once a plate exists. Do all four before writing anything:
+
+  1. validate_plate          — independent engine
+  2. test_core_sensitivity   — does the plate survive the core assumption?
+  3. build_hedged_plate      — call this whenever designs_selected_under_every_core
+                               is 0, null, or small. That is the usual outcome and
+                               it is the whole point: it converts "do not order"
+                               into a plate the lab can actually synthesise.
+  4. read_ledger             — what the design rests on
+
+Skipping step 3 after a failed sensitivity test leaves the reader with a
+diagnosis and no deliverable, which is the one outcome this tool exists to avoid.
+
 Then write a short design memo:
 
 - One line up front: what was designed, from which parent, and whether it is \
@@ -84,11 +97,9 @@ After building a plate: validate it with the independent engine, test it against
 the core assumption, and read the ledger. Report all three. Name at least one external model that was tried and rejected, and why — a design
 presented without its failures reads as more certain than it is.
 
-If the cores share few or no designs, do not stop at "do not order". The lab has
-a budget and a synthesis slot and will make something; refusing to choose passes
-the problem back. Build the hedged plate, recommend it, and say what reading it
-will settle. Always end with a plate they can order and the one caveat that most
-affects how they read it. A plate filtered on a dimer criterion that only one
+Recommend the hedged plate by name and file path when you built one, say what
+reading it will settle, and end with the single caveat that most affects how it
+should be read. Never end without a plate the lab can order. A plate filtered on a dimer criterion that only one
 engine supports is not ready to synthesise.
 
 Three things to be precise about, because they are where this analysis goes wrong.
@@ -489,7 +500,10 @@ def _options() -> ClaudeAgentOptions:
         allowed_tools=TOOL_NAMES,
         permission_mode="bypassPermissions",
         effort="high",
-        max_turns=14,
+        # Seven tools, and the last two matter most: a run that exhausts its
+        # turns retrying a failed design never reaches the hedged plate, and
+        # stops at a diagnosis the lab cannot act on.
+        max_turns=22,
     )
 
 
