@@ -291,16 +291,19 @@ def _position_check(tests: list[plate.Well]) -> tuple[float, float]:
     return round(observed, 3), round(null[int(0.95 * len(null))], 3)
 
 
-def _simulated_for(plate_csv: Path) -> Path:
+def simulated_for(plate_csv: Path) -> Path:
     """Write simulated wet-lab results matching this exact plate.
 
-    Generated the moment a plate is, because the join is on well position: a
-    results file from any other plate loads without complaint and reports a
-    correlation that means nothing. Keeping the pair in step removes the only way
-    the feedback loop can be demonstrated wrongly.
+    Only ever called explicitly, by `./run --demo-results`. It used to run
+    automatically whenever a plate was written, which put a file of invented
+    measurements into the same directory as the real design output and offered it
+    for download from the interface — as though producing bench data were
+    something this tool does. It is not: the app designs plates, and measurements
+    come from a bench.
 
-    Named and labelled so it cannot be mistaken for a measurement — the filename
-    says SIMULATED and every row says so again in its own column.
+    Matching the plate still matters when it is wanted, because the join is on
+    well position: results from any other plate load without complaint and report
+    a correlation that means nothing.
     """
     import feedback
     hypothesis = None
@@ -371,9 +374,8 @@ def artifacts(result: dict, out_dir: Path) -> dict:
         out["plate"] = plots.plate_map(
             result["wells"], str(out_dir / f"{t}_plate.png"),
             null_p95=pc["null_p95"], observed=pc["observed"])
-        csv_path = plate.write_order(result["wells"], out_dir / f"{t}_plate.csv")
-        out["csv"] = str(csv_path)
-        out["simulated_results"] = str(_simulated_for(csv_path))
+        out["csv"] = str(plate.write_order(result["wells"],
+                                           out_dir / f"{t}_plate.csv"))
     # Copy the run's outputs alongside its manifest so the directory is
     # self-contained: a plate is a lab record and should not depend on files
     # that the next run will overwrite.

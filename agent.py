@@ -389,7 +389,6 @@ async def build_hedged_plate(args: dict) -> dict:
     out_dir = workspace.current()
     safe = (args.get("target") or "target").replace("/", "_")
     csv_path = plate.write_order(result["wells"], out_dir / f"{safe}_hedged_plate.csv")
-    design._simulated_for(csv_path)
     return _ok({
         "target": result["target"],
         "wells": len(result["wells"]),
