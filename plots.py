@@ -287,3 +287,95 @@ def plate_map(wells: list, path: str, null_p95: float | None = None,
     fig.savefig(path, dpi=170, facecolor=SURFACE, bbox_inches="tight")
     plt.close(fig)
     return path
+
+
+TAIL_COLOUR = "#5b6ee1"     # the appended competing tail
+
+
+def switch_diagram(parent: str, construct: str, core: tuple[int, int],
+                   path: str, is_quadruplex: bool = False) -> str:
+    """The mechanism, drawn: the parent's fold beside the switch built from it.
+
+    This is the one picture that shows what the design actually does. On the
+    left the parent folds and its binding core is buried in that fold. On the
+    right an appended tail has zipped up against the core and held it open; the
+    target has to displace the tail to bind, and that displacement is the signal.
+
+    Drawn from ViennaRNA's own layout coordinates rather than its PostScript
+    output, so the colours match the rest of the figures and the core and tail
+    can be picked out — which is the entire point, and something a generic
+    structure plot cannot do.
+    """
+    import RNA
+
+    def layout(seq: str) -> tuple:
+        # Watson-Crick only. ViennaRNA's layout works from a dot-bracket string
+        # and a quadruplex is not one, so a G4 parent cannot be drawn here. The
+        # energy shown is therefore this structure's own, never the quadruplex
+        # value from thermo.fold - captioning a Watson-Crick drawing with a
+        # quadruplex energy would put a number on a picture of something else.
+        md = RNA.md()
+        md.temperature = 37.0
+        fc = RNA.fold_compound(seq, md)
+        ss, mfe = fc.mfe()
+        co = RNA.get_xy_coordinates(ss)
+        xy = [(co.get(i).X, co.get(i).Y) for i in range(len(seq))]
+        pt = RNA.ptable(ss)
+        pairs = [(i - 1, pt[i] - 1) for i in range(1, len(pt)) if pt[i] > i]
+        return xy, pairs, ss, mfe
+
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 5.2))
+    fig.patch.set_facecolor(SURFACE)
+
+    panels = [
+        (axes[0], parent, "Parent aptamer", "core folded into the structure"),
+        (axes[1], construct, "Switch construct", "tail holds the core open"),
+    ]
+    quadruplex = is_quadruplex
+
+    for ax, seq, title, caption in panels:
+        ax.set_facecolor(SURFACE)
+        xy, pairs, ss, mfe = layout(seq)
+
+        for a, b in pairs:                       # base pairs, drawn behind
+            ax.plot([xy[a][0], xy[b][0]], [xy[a][1], xy[b][1]],
+                    color=GRID, linewidth=1.0, zorder=1)
+        ax.plot([p[0] for p in xy], [p[1] for p in xy],
+                color=INK_SOFT, linewidth=1.2, zorder=2)
+
+        for i, (x, y) in enumerate(xy):
+            pos = i + 1
+            if pos > len(parent):
+                colour, size = TAIL_COLOUR, 34    # the appended tail
+            elif core[0] <= pos <= core[1]:
+                colour, size = PICKED, 34         # the binding core
+            else:
+                colour, size = KEEP, 20
+            ax.scatter([x], [y], s=size, c=colour, edgecolors=SURFACE,
+                       linewidths=0.6, zorder=3)
+
+        ax.set_aspect("equal")
+        ax.set_axis_off()
+        ax.set_title(f"{title}   {mfe:.1f} kcal/mol", fontsize=11, color=INK,
+                     fontweight="bold", loc="left", pad=8)
+        ax.text(0.0, -0.04, caption, transform=ax.transAxes, fontsize=9,
+                color=INK_SOFT, va="top")
+
+    for x, lab, col in ((.06, "binding core", PICKED),
+                        (.30, "rest of the aptamer", KEEP),
+                        (.62, "appended tail", TAIL_COLOUR)):
+        fig.add_artist(plt.Rectangle((x, .015), .016, .022, color=col,
+                                     transform=fig.transFigure))
+        fig.text(x + .022, .018, lab, fontsize=8.5, color=INK_SOFT)
+
+    if quadruplex:
+        fig.text(.06, .085,
+                 "This parent folds a G-quadruplex, which has no secondary-structure\n"
+                 "drawing. Watson-Crick pairing only is shown — the real fold is far\n"
+                 "more stable than the energy above (-9.7 vs -0.1 kcal/mol).",
+                 fontsize=8.5, color=PICKED, linespacing=1.5)
+
+    fig.tight_layout(rect=(0, 0.17 if quadruplex else 0.06, 1, 1))
+    fig.savefig(path, dpi=170, facecolor=SURFACE)
+    plt.close(fig)
+    return path

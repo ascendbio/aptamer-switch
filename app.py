@@ -59,6 +59,22 @@ Everything else on the plate is unaffected: ddG, specificity and dimer margins
 are computed from sequence and never touch affinity."""
 
 EXPLAIN = {
+    "switch": """
+**The mechanism, drawn from the actual sequences.**
+
+Left is the published parent folded on its own; the binding core (orange) is
+tied up in that fold. Right is the top-ranked design from this plate: an
+appended tail (blue) has zipped up against the core and is holding it open.
+
+Target binding has to displace that tail. The displacement moves the methylene
+blue reporter relative to the electrode, and that movement is the signal — which
+is why folding energy, not affinity, is the quantity being engineered.
+
+Both layouts come from ViennaRNA. A **G-quadruplex has no secondary-structure
+drawing**, so where the parent forms one the panel shows its Watson-Crick pairing
+only and says so: the real fold is far more stable than the energy printed above
+it.
+""",
     "funnel": """
 **Every candidate considered, and what removed each one.**
 
@@ -156,19 +172,19 @@ def _figures(target: str, since: float = 0.0) -> tuple:
         hits = [p for p in OUT.glob(pattern) if p.stat().st_mtime >= since]
         return str(max(hits, key=lambda p: p.stat().st_mtime)) if hits else None
 
-    return (newest("*_funnel.png"), newest("*_dose.png"), newest("*_window.png"),
-            newest("*_plate.png"), newest("*_plate.csv"), _gallery(since),
-            _comparison(since))
+    return (newest("*_switch.png"), newest("*_funnel.png"), newest("*_dose.png"),
+            newest("*_window.png"), newest("*_plate.png"), newest("*_plate.csv"),
+            _gallery(since), _comparison(since))
 
 
-BLANK = (None, None, None, None, None, [], None)
+BLANK = (None, None, None, None, None, None, [], None)
 
 # The single source of truth for what _panels returns and what the Blocks wires,
 # so the two cannot drift apart silently.
 OUTPUT_ORDER = [
-    "funnel_img", "dose_img", "window_img", "plate_img", "order",
+    "switch_img", "funnel_img", "dose_img", "window_img", "plate_img", "order",
     "gallery", "compare", "ledger_md",
-    "funnel_box", "dose_box", "dose_absent", "window_box", "plate_box",
+    "switch_box", "funnel_box", "dose_box", "dose_absent", "window_box", "plate_box",
     "compare_box", "gallery_box", "ledger_box",
 ]
 
@@ -183,14 +199,15 @@ def _panels(figs: tuple):
     say which component got the wrong type. The assertion below is cheap
     insurance against the same mistake.
     """
-    funnel, dose, window, plate, csv, gallery_items, table = figs
+    switch, funnel, dose, window, plate, csv, gallery_items, table = figs
     latest = store.latest_run(OUT)
     text = ledger.build(latest / "manifest.json") if latest and table else ""
 
     values = (
-        funnel, dose, window, plate,                       # the four images
+        switch, funnel, dose, window, plate,               # the five images
         gr.update(value=csv, visible=bool(csv)),           # order file
         gallery_items, table, text,                        # gallery, table, ledger
+        gr.update(visible=bool(switch)),                   # switch_box
         gr.update(visible=bool(funnel)),                   # funnel_box
         gr.update(visible=bool(dose)),                     # dose_box
         gr.update(visible=not dose and bool(plate)),       # dose_absent
@@ -254,9 +271,9 @@ def _comparison(since: float) -> list[list]:
     return rows
 
 
-KIND_LABEL = {"funnel": "library → plate", "dose": "what the sensor can see",
+KIND_LABEL = {"switch": "how the switch works", "funnel": "library → plate", "dose": "what the sensor can see",
               "window": "switching vs specificity", "plate": "the 96-well plate"}
-KIND_ORDER = ["funnel", "window", "dose", "plate"]
+KIND_ORDER = ["switch", "funnel", "window", "dose", "plate"]
 
 
 def _gallery(since: float) -> list[tuple[str, str]]:
@@ -410,6 +427,11 @@ with gr.Blocks(title="Aptamer switch design") as demo:
             # reads as a broken tool; the reason a figure is absent is
             # information, and belongs where the figure would have been rather
             # than inside a collapsed accordion nobody opens.
+            with gr.Column(visible=False) as switch_box:
+                switch_img = gr.Image(label="How the switch works", height=230)
+                with gr.Accordion("What am I looking at?", open=False):
+                    gr.Markdown(EXPLAIN["switch"])
+
             with gr.Column(visible=False) as funnel_box:
                 funnel_img = gr.Image(label="From library to plate", height=200)
                 with gr.Accordion("What am I looking at?", open=False):
@@ -470,9 +492,9 @@ with gr.Blocks(title="Aptamer switch design") as demo:
     gr.Markdown(FOOTER)
 
     # One list, in the same order _panels returns its values.
-    outputs = [funnel_img, dose_img, window_img, plate_img, order,
+    outputs = [switch_img, funnel_img, dose_img, window_img, plate_img, order,
                gallery, compare, ledger_md,
-               funnel_box, dose_box, dose_absent, window_box, plate_box,
+               switch_box, funnel_box, dose_box, dose_absent, window_box, plate_box,
                compare_box, gallery_box, ledger_box]
     assert len(outputs) == len(OUTPUT_ORDER), "outputs drifted from OUTPUT_ORDER"
 
