@@ -47,6 +47,7 @@ def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None
         kd_source: str = "") -> dict:
     """Design under every plausible core, then spend one plate across them."""
     parent = parent.upper().replace("U", "T")
+    already_swept = (parent, target, kd_intrinsic_M) in sensitivity._sweep_cache
     sweep = sensitivity.run(parent, target=target, kd_intrinsic_M=kd_intrinsic_M,
                             kd_source=kd_source, keep_results=True)
     results = sweep.pop("results", {})
@@ -119,6 +120,16 @@ def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None
         "sweep": sweep,
         "position_check": _confounding(wells),
         "reading": _reading([c for c, _ in per_core_rows], share),
+        # What this call actually had to do. Allocating 96 wells across
+        # hypotheses is arithmetic once the designs exist; the minutes were
+        # spent in the sweep that produced them.
+        "reused_sweep": already_swept,
+        "designs_available": sum(len(r) for _, r in per_core_rows),
+        "work_note": (
+            f"reused {sum(len(r) for _, r in per_core_rows)} designs already "
+            f"computed by the core-sensitivity sweep; this step only allocated "
+            f"and laid them out" if already_swept else
+            f"designed under {len(sweep['cores_tested'])} cores from scratch"),
     }
 
 

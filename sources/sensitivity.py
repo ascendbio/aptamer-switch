@@ -70,6 +70,7 @@ def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None
     cores = candidate_cores(len(parent))
 
     per_core, selected_sets, results = [], [], {}
+    computed = reused = 0
     for core in cores:
         try:
             r = design.run(parent, core, kd_intrinsic_M, target=target,
@@ -82,6 +83,10 @@ def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None
         picked = {w.sequence for w in r["wells"] if w.role == "test"}
         selected_sets.append(picked)
         results[tuple(core)] = r
+        if r.get("from_cache"):
+            reused += 1
+        else:
+            computed += 1
         per_core.append({
             "core": list(core),
             "architecture": r["architecture"],
@@ -114,6 +119,8 @@ def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None
         "robust_fraction": (round(len(robust) / max(len(s) for s in productive), 3)
                             if len(productive) >= 2 else None),
         "verdict": _verdict(len(productive), len(cores), len(robust)),
+        "designs_computed": computed,
+        "designs_reused_from_cache": reused,
         # Always retained so a later hedged plate can reuse the sweep; the tool
         # layer strips it before returning to the agent.
         "results": results,

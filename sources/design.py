@@ -113,7 +113,10 @@ def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float | None,
     key = (parent.upper(), tuple(core), kd_intrinsic_M, target, mw_da,
            clinical_pg_per_ml)
     if key in _run_cache:
-        return _run_cache[key]
+        # Flagged, not hidden. A step that returns in zero seconds because it
+        # reused work looks identical to a step that did nothing, and the second
+        # reading is the one a sceptical reader reaches for first.
+        return {**_run_cache[key], "from_cache": True}
 
     # Without a target sequence there is no honest molecular weight, so the
     # clinical conversion is skipped rather than defaulted.
@@ -203,6 +206,7 @@ def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float | None,
         "kd_apparent_nM": [r["kd_apparent_nM"] for r in selected
                            if r["kd_apparent_nM"] is not None],
     }
+    out["from_cache"] = False
     _run_cache[key] = out
     return out
 

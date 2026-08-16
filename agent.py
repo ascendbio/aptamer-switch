@@ -356,6 +356,8 @@ async def build_hedged_plate(args: dict) -> dict:
         "control_wells": result["control_wells"],
         "position_check": result["position_check"],
         "how_to_read_it": result["reading"],
+        "work_note": result["work_note"],
+        "designs_available": result["designs_available"],
         "order_file": str(csv_path),
     })
 
@@ -449,7 +451,8 @@ def _summarise(payload: str) -> str:
         spans = ", ".join(f"{a}-{b}" for a, b in d["core_hypotheses"])
         return (f"{d['wells']} wells split across {len(d['core_hypotheses'])} core "
                 f"hypotheses ({spans}), {d['wells_per_hypothesis']} each · "
-                f"confounded: {d['position_check']['confounded']}")
+                f"confounded: {d['position_check']['confounded']} · "
+                f"{d.get('work_note', '')}")
 
     if "ledger_markdown" in d:
         text = d["ledger_markdown"]
@@ -458,9 +461,13 @@ def _summarise(payload: str) -> str:
 
     if "cores_tested" in d:
         every = d.get("designs_selected_under_every_core")
+        made = d.get("designs_computed")
+        used = d.get("designs_reused_from_cache")
+        work = (f" · {made} designs computed"
+                + (f", {used} reused" if used else "")) if made is not None else ""
         return (f"{d['cores_producing_a_plate']}/{len(d['cores_tested'])} cores "
-                f"yield a plate · {d['designs_selected_under_any_core']} designs "
-                f"across them · "
+                f"yield a plate{work} · {d['designs_selected_under_any_core']} "
+                f"designs across them · "
                 + (f"{every} survive every core" if every is not None
                    else "too few productive cores to test the assumption"))
 
