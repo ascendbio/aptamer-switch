@@ -195,9 +195,15 @@ def _figures(target: str, since: float = 0.0) -> tuple:
         hits = [p for p in out_dir.glob(pattern) if p.stat().st_mtime >= since]
         return str(max(hits, key=lambda p: p.stat().st_mtime)) if hits else None
 
-    return (newest("*_switch.png"), newest("*_funnel.png"), newest("*_dose.png"),
+    figs = (newest("*_switch.png"), newest("*_funnel.png"), newest("*_dose.png"),
             newest("*_window.png"), newest("*_plate.png"), newest("*_plate.csv"),
-            _gallery(since), _comparison(since), newest("SIMULATED_results_*.csv"))
+            _gallery(since), _comparison(since))
+    # Same lockstep problem as _panels, one step earlier: removing the simulated
+    # results file left this returning nine values into an eight-value unpack,
+    # and every run failed with "too many values to unpack" — a message that
+    # names no component and points at no line the user can see.
+    assert len(figs) == len(BLANK), f"{len(figs)} figures, BLANK has {len(BLANK)}"
+    return figs
 
 
 BLANK = (None, None, None, None, None, None, [], None)
