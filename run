@@ -7,6 +7,26 @@
 set -e
 cd "$(dirname "$0")"
 
+case "${1:-}" in
+  -h|--help)
+    cat <<'USAGE'
+Aptamer switch design for continuous biosensors.
+
+  ./run                 launch the web UI on http://localhost:7860
+  ./run "IL-6"          run the agent for one biomarker, output to the terminal
+  ./run --help          this message
+
+Needs Python 3.12 with ViennaRNA, gradio and claude-agent-sdk:
+  python3.12 -m venv venv && ./venv/bin/pip install -r requirements.txt
+
+Set APTAMER_PY to choose the interpreter explicitly.
+Literature search needs the `paperclip` CLI on PATH; the design pipeline does
+not, and runs offline:
+  ./venv/bin/python sources/design.py
+USAGE
+    exit 0 ;;
+esac
+
 CANDIDATES=(
   "$APTAMER_PY"
   "$HOME/Documents/AscendBiosci/hackathon-mcp/venv/bin/python"

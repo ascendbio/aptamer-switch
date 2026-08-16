@@ -287,10 +287,15 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
     rid = _results_id(grep_out)
     n_papers = len(set(GREP_DOC_RE.findall(grep_out)))
     if not rid or not n_papers:
+        # The search ran and matched nothing. That is a real answer about this
+        # target, distinct from the search having failed, and conflating the two
+        # is how an outage became "no IL-6 aptamer exists" earlier.
         return {"target": target, "searched_as": variants, "n_papers": 0,
-                "parents": [],
-                "note": "no paper contains both a target-aptamer phrase and a "
-                        "written-out sequence"}
+                "papers_read": 0, "papers_failed": 0, "parents": [],
+                "note": "the search ran and no paper contains both a "
+                        "target-aptamer phrase and a written-out sequence. This "
+                        "is a genuine absence in the corpus, not a failure — "
+                        "check the spelling of the target first."}
 
     # Deterministic extraction. Two passes, because neither call alone is both
     # complete and cheap: the corpus-wide grep answers in one round trip but

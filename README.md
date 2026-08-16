@@ -38,27 +38,46 @@ predicted sequence.
 
 ## Running it
 
-Python 3.12 (ViennaRNA lacks a 3.13 wheel on some platforms).
+Verified from a clean clone on macOS with Python 3.12. ViennaRNA has no 3.13
+wheel on some platforms, so 3.12 is not optional.
 
 ```bash
+git clone https://github.com/ascendbio/aptamer-switch
+cd aptamer-switch
 python3.12 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 
+./run --help       # usage
 ./run              # web UI on http://localhost:7860
 ./run "IL-6"       # same agent, terminal output
 ```
 
-`run` finds an interpreter automatically; set `APTAMER_PY` to override.
+`run` locates a suitable interpreter itself; set `APTAMER_PY` to choose one.
 
-The agent authenticates through your local Claude Code session, so no
-`ANTHROPIC_API_KEY` is needed and nothing is billed to the API. Literature search
-needs the `paperclip` CLI on PATH.
+### What needs what
 
-To skip retrieval and design from a known parent:
+| | needs | if missing |
+|---|---|---|
+| design pipeline | nothing beyond `requirements.txt` | — |
+| the agent | a local Claude Code session | agent will not start |
+| literature search | the `paperclip` CLI on `PATH` | agent reports the search failed, and says so rather than reporting an absence |
+| `validate_plate` | proto-tools in a separate venv, `PROTO_PY` pointing at it | reported as unavailable; the plate is unaffected |
+
+No `ANTHROPIC_API_KEY` is required — the agent authenticates through your Claude
+Code session and nothing is billed to the API. No GPU is used, and no part of the
+design pipeline calls a paid service.
+
+### Running without the agent
+
+The whole design path works offline from a known parent, which is the fastest way
+to see what the tool produces:
 
 ```bash
 ./venv/bin/python sources/design.py
 ```
+
+That writes a 96-well plate, its figures and a run manifest to `out/` in about
+30 seconds.
 
 ## What each piece does
 

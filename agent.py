@@ -246,6 +246,21 @@ async def validate_plate(args: dict) -> dict:
     if not csv_path.exists():
         return _ok({"error": f"no plate at {csv_path}; run design_plate first"})
 
+    # Optional dependency, and its absence is a normal state on a fresh clone.
+    # Say what is missing and that the plate is unaffected, rather than surfacing
+    # a subprocess error that reads like the validation found something wrong.
+    if not PROTO_PY.exists():
+        return _ok({
+            "validation_unavailable": True,
+            "reason": f"proto-tools interpreter not found at {PROTO_PY}",
+            "how_to_enable": "install proto-tools in a separate venv and point "
+                             "PROTO_PY at its interpreter; it is CPU-only and "
+                             "costs nothing to run",
+            "note": "the plate itself is unaffected — this is an independent "
+                    "second opinion on the thermodynamics, not a step in "
+                    "building it",
+        })
+
     # Primer3 lives in the proto-tools environment, which carries torch, rdkit
     # and a pinned numba. Shelling out keeps that out of the agent's venv - the
     # collision that broke the MCP server earlier came from merging exactly this
@@ -319,6 +334,9 @@ def _summarise(payload: str) -> str:
         kind = "G-quadruplex" if d["core_is_quadruplex"] else "Watson-Crick"
         trust = "modellable" if d["opening_energy_trustworthy"] else "opening energy NOT reliable"
         return f"{kind} fold, MFE {d['mfe']} kcal/mol · {trust}"
+
+    if d.get("validation_unavailable"):
+        return "independent validation unavailable (proto-tools not installed)"
 
     if "homodimer" in d and "wells_compared" in d:
         hd = d["homodimer"]
