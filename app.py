@@ -126,8 +126,8 @@ Grey points were filtered out and are left visible on purpose, so the shape of
 what was rejected stays legible instead of being cropped away. Orange points are
 the wells on the plate.
 
-**How the 96 are chosen.** The window is divided into the 8 vertical bands you
-can see, and a group is taken from each — so the plate spans the usable energy
+**How the 96 are chosen.** The window is divided into the 8 vertical bands on the
+left, and **11 wells are taken from each** — 8 x 11 = 88, plus 8 controls — so the plate spans the usable energy
 range rather than clustering at the single best-predicted point. Within a band
 every candidate has effectively the same switching energy, so they are chosen to
 be as mechanistically *unalike* as possible: different tail lengths, registers,
@@ -136,6 +136,14 @@ mismatch counts and linkers reaching the same energy by different routes.
 That is deliberate. Ranking within a band would pick near-duplicates, and if the
 energy model is wrong about one mechanism a band built from it fails as a unit.
 A mixed band still reports.
+
+**Why one point is orange and its neighbour green.** In the left panel they are
+identical — same energy, same specificity — so nothing there can explain the
+choice. The right panel is the reason: the 11 wells taken from a band carry 11
+*different* combinations of tail length, linker, mismatch count and register,
+while the candidates passed over are mostly duplicates of one another. In one
+band the 11 selected had 11 distinct mechanisms; the 91 rejected shared only 16
+between them.
 """,
     "plate": """
 **The physical 96-well plate, coloured by ddG.**

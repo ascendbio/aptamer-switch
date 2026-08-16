@@ -112,8 +112,15 @@ def design_window(rows: list[dict], picked: set[str], path: str,
     behind the ones that pass, so the shape of what was rejected stays visible
     instead of being quietly cropped out.
     """
-    fig, ax = plt.subplots(figsize=(7.6, 5.0))
+    # Two panels, because selection happens on axes the first one cannot show.
+    # Left is the filter: ddG against specificity. Right is the choice: which
+    # design levers each selected well uses. Asked why one point is orange and
+    # its neighbour green, the left panel has no answer — they are identical
+    # there, and differ only in mechanism.
+    fig, (ax, ax2) = plt.subplots(
+        1, 2, figsize=(11.6, 5.0), gridspec_kw={"width_ratios": [1.5, 1]})
     fig.patch.set_facecolor(SURFACE)
+    ax2.set_facecolor(SURFACE)
 
     fail = [r for r in rows if not r["passes"]]
     ok = [r for r in rows if r["passes"] and r["name"] not in picked]
@@ -157,6 +164,29 @@ def design_window(rows: list[dict], picked: set[str], path: str,
         leg = ax.legend(frameon=False, fontsize=8.5, loc="lower right")
         for t in leg.get_texts():
             t.set_color(INK_SOFT)
+
+    # Right panel: the levers. Every selected well is a distinct combination of
+    # tail length and linker, sized by how many mismatches it carries; the
+    # passing-but-unselected candidates sit behind them, and the clustering is
+    # the point — ranking would have taken eleven copies of one mechanism.
+    passing = [r for r in rows if r["passes"]]
+    if passing and all(r.get("tail_len") is not None for r in passing):
+        jitter = 0.12
+        rng = __import__("random").Random(7)
+        for group, colour, size, z in ((passing, KEEP, 12, 2), (sel, PICKED, 46, 3)):
+            xs = [r["tail_len"] + rng.uniform(-jitter, jitter) for r in group]
+            ys = [r["linker"] + rng.uniform(-jitter, jitter) for r in group]
+            sizes = [size * (1 + 0.35 * (r["n_mismatch"] or 0)) for r in group]
+            ax2.scatter(xs, ys, s=sizes, c=colour, edgecolors="none",
+                        alpha=0.55 if colour is KEEP else 1.0, zorder=z)
+        combos = len({(r["register"], r["tail_len"], r["n_mismatch"], r["linker"])
+                      for r in sel})
+        _frame(ax2, "tail length (nt)", "linker (nt)")
+        ax2.set_title(f"How they differ — {combos} mechanisms in {len(sel)} wells",
+                      fontsize=11, color=INK, fontweight="bold", loc="left",
+                      pad=10)
+        ax2.text(0.0, -0.16, "marker size = mismatches carried",
+                 transform=ax2.transAxes, fontsize=8.5, color=INK_SOFT)
 
     fig.tight_layout()
     fig.savefig(path, dpi=170, facecolor=SURFACE)
