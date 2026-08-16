@@ -107,6 +107,17 @@ reports a shape change that has nothing to do with the target.
 Grey points were filtered out and are left visible on purpose, so the shape of
 what was rejected stays legible instead of being cropped away. Orange points are
 the wells on the plate.
+
+**How the 96 are chosen.** The window is divided into the 8 vertical bands you
+can see, and a group is taken from each — so the plate spans the usable energy
+range rather than clustering at the single best-predicted point. Within a band
+every candidate has effectively the same switching energy, so they are chosen to
+be as mechanistically *unalike* as possible: different tail lengths, registers,
+mismatch counts and linkers reaching the same energy by different routes.
+
+That is deliberate. Ranking within a band would pick near-duplicates, and if the
+energy model is wrong about one mechanism a band built from it fails as a unit.
+A mixed band still reports.
 """,
     "plate": """
 **The physical 96-well plate, coloured by ddG.**

@@ -63,8 +63,46 @@ CLINICAL_PG_IL6_UNCITED = [
 CLINICAL_PG = CLINICAL_PG_IL6_UNCITED
 
 
+def _levers(row: dict) -> tuple:
+    """The design choices behind a candidate, for measuring how alike two are."""
+    return (row.get("register"), row.get("tail_len"), row.get("n_mismatch"),
+            row.get("linker"))
+
+
+def _diverse(band: list[dict], k: int) -> list[dict]:
+    """`k` candidates from one energy band, as mechanistically unalike as possible.
+
+    Within a band every candidate has effectively the same predicted switching
+    energy, so ranking them adds nothing: the specificity margin barely varies
+    among designs that passed the filter, which makes rank almost exactly
+    -|ddG| and picks near-duplicates. Taking the top k that way filled each band
+    with one tail length at one register.
+
+    That is the failure the tiling exists to avoid, one level down. If the energy
+    model is wrong about a mechanism, a band built from a single mechanism fails
+    entirely; a mixed band still reports. Greedy farthest-point on the levers,
+    seeded with the best-ranked candidate so the strongest design is always kept.
+    """
+    if len(band) <= k:
+        return band
+    chosen = [band[0]]
+    while len(chosen) < k:
+        best, best_d = None, -1
+        for cand in band:
+            if cand in chosen:
+                continue
+            d = min(sum(a != b for a, b in zip(_levers(cand), _levers(c)))
+                    for c in chosen)
+            if d > best_d:
+                best, best_d = cand, d
+        if best is None:
+            break
+        chosen.append(best)
+    return chosen
+
+
 def _tile(rows: list[dict], n: int, window: tuple[float, float] = WINDOW) -> list[dict]:
-    """Spread `n` picks evenly across the switching window, best-ranked first."""
+    """Spread `n` picks evenly across the switching window, diversely within it."""
     lo, hi = window
     width = (hi - lo) / N_BINS
     per_bin = max(n // N_BINS, 1)
@@ -73,7 +111,7 @@ def _tile(rows: list[dict], n: int, window: tuple[float, float] = WINDOW) -> lis
     for i in range(N_BINS):
         band_lo = lo + i * width
         band = [r for r in rows if band_lo <= r["dd_g"] < band_lo + width]
-        for r in band[:per_bin]:
+        for r in _diverse(band, per_bin):
             picked.append(r)
             used.add(r["name"])
 
@@ -280,8 +318,10 @@ def artifacts(result: dict, out_dir: Path) -> dict:
     pc = result["position_check"]
     out = {
         "funnel": plots.selection_funnel(stages, str(out_dir / f"{t}_funnel.png")),
-        "window": plots.design_window(result["rows"], result["picked_names"],
-                                      str(out_dir / f"{t}_window.png")),
+        "window": plots.design_window(
+            result["rows"], result["picked_names"],
+            str(out_dir / f"{t}_window.png"),
+            bands=(*result["design_window"], N_BINS)),
     }
     # The dose and plate figures need a selection to draw. With none, the funnel
     # and window still carry the whole story of why, so they are rendered anyway.

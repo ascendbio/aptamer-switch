@@ -102,7 +102,8 @@ def selection_funnel(stages: list[tuple[str, int, str]], path: str) -> str:
     return path
 
 
-def design_window(rows: list[dict], picked: set[str], path: str) -> str:
+def design_window(rows: list[dict], picked: set[str], path: str,
+                  bands: tuple[float, float, int] | None = None) -> str:
     """Specificity against switching, with the chosen wells marked.
 
     Two axes, because the plate is chosen on two. Horizontal is the switching
@@ -131,6 +132,18 @@ def design_window(rows: list[dict], picked: set[str], path: str) -> str:
         ax.scatter([r["dd_g"] for r in group], [r["specificity_margin"] for r in group],
                    s=size, c=colour, edgecolors="none", label=label, zorder=z,
                    alpha=0.75 if colour is DROP else 1.0)
+
+    # Show the bands the plate is tiled across. Without them the selected points
+    # look scattered at random along the top; with them it is visible that one
+    # group is taken from each energy band, which is the whole selection rule.
+    if bands:
+        lo, hi, n_bins = bands
+        for i in range(1, n_bins):
+            ax.axvline(lo + i * (hi - lo) / n_bins, color=GRID, linewidth=0.7,
+                       zorder=0)
+        ax.text(lo, ax.get_ylim()[0], f"  {n_bins} energy bands · the plate takes "
+                f"a spread of designs from each", fontsize=8, color=INK_SOFT,
+                va="bottom")
 
     ax.axvline(0, color=INK_SOFT, linewidth=0.9, linestyle=":", zorder=1)
     ax.text(0, ax.get_ylim()[1], " tail and fold balanced", fontsize=8,
