@@ -155,12 +155,19 @@ BLANK = (None, None, None, None, None, [], None)
 def _panels(figs: tuple):
     """Figure outputs plus the visibility of the box each one lives in."""
     funnel, dose, window, plate = figs[0], figs[1], figs[2], figs[3]
+    csv, gallery_items, table = figs[4], figs[5], figs[6]
     return (*figs,
             gr.update(visible=bool(funnel)),
             gr.update(visible=bool(dose)),
             gr.update(visible=not dose and bool(plate)),   # explain the absence
             gr.update(visible=bool(window)),
-            gr.update(visible=bool(plate)))
+            gr.update(visible=bool(plate)),
+            gr.update(visible=bool(csv)),
+            # The comparison table earns its place only once there is something
+            # to compare; the gallery only once a second parent exists, since
+            # with one it merely repeats the panels above.
+            gr.update(visible=bool(table)),
+            gr.update(visible=len(gallery_items or []) > 4))
 
 COMPARE_COLUMNS = ["parent", "architecture", "library", "in window", "passing",
                    "wells", "blocked by", "best |ddG|"]
@@ -355,7 +362,8 @@ with gr.Blocks(title="Aptamer switch design") as demo:
                                  scale=8, autofocus=True)
                 send = gr.Button("Design plate", variant="primary", scale=1)
             gr.Examples(EXAMPLES, inputs=box, label="Try one")
-            order = gr.File(label="Vendor order file (96 wells)", height=90)
+            order = gr.File(label="Vendor order file (96 wells)", height=90,
+                            visible=False)
         with gr.Column(scale=2):
             # Each figure carries its own reading guide, collapsed. The plots
             # answer questions that are not obvious from the axes — what a
@@ -392,33 +400,37 @@ with gr.Blocks(title="Aptamer switch design") as demo:
     # rejected parent's funnel is often the more informative figure: it shows
     # which criterion removed the whole library and therefore why that candidate
     # could not work, which is what makes the recommendation checkable.
-    gr.Markdown("#### Parents assessed this run")
-    gr.Markdown(
+    with gr.Column(visible=False) as compare_box:
+        gr.Markdown("#### Parents assessed this run")
+        gr.Markdown(
         "<sub>One row per published parent the agent evaluated. **wells = none** "
         "means that candidate produced no usable plate, and **blocked by** names "
         "the criterion that eliminated its entire library — a property of the "
         "parent sequence, which no design choice can work around. **best |ddG|** "
-        "is how close the best selected design sits to switching balance; far "
-        "from zero means it was never going to switch.</sub>")
-    compare = gr.Dataframe(headers=COMPARE_COLUMNS, wrap=True, interactive=False)
+            "is how close the best selected design sits to switching balance; "
+            "far from zero means it was never going to switch.</sub>")
+        compare = gr.Dataframe(headers=COMPARE_COLUMNS, wrap=True,
+                               interactive=False)
 
-    with gr.Accordion("Every parent evaluated in this run — click any figure to "
-                      "enlarge", open=False):
-        gr.Markdown(
-            "The agent usually assesses several published parents before "
-            "recommending one. Captions name the parent; each has up to four "
-            "figures. A parent showing only a funnel and a window plot produced "
-            "**no usable plate** — read its funnel to see which criterion "
-            "eliminated the whole library.")
-        gallery = gr.Gallery(label=None, columns=2, height=520,
-                             allow_preview=True, object_fit="contain")
+    with gr.Column(visible=False) as gallery_box:
+        with gr.Accordion("Every parent evaluated in this run — click any figure "
+                          "to enlarge", open=False):
+            gr.Markdown(
+                "The agent usually assesses several published parents before "
+                "recommending one. Captions name the parent; each has up to four "
+                "figures. A parent showing only a funnel and a window plot "
+                "produced **no usable plate** — read its funnel to see which "
+                "criterion eliminated the whole library.")
+            gallery = gr.Gallery(label=None, columns=2, height=520,
+                                 allow_preview=True, object_fit="contain")
     gr.Markdown(FOOTER)
 
     for trigger in (box.submit, send.click):
         trigger(respond, [box, chat],
                 [chat, box, funnel_img, dose_img, window_img, plate_img, order,
                  gallery, compare,
-                 funnel_box, dose_box, dose_absent, window_box, plate_box])
+                 funnel_box, dose_box, dose_absent, window_box, plate_box,
+                 order, compare_box, gallery_box])
 
 
 if __name__ == "__main__":

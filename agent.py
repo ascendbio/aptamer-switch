@@ -305,6 +305,12 @@ def _summarise(payload: str) -> str:
     if not isinstance(d, dict):
         return ""
 
+    # An error is an outcome. Without this the trace showed the call and then
+    # nothing, so seven failed attempts rendered as seven identical lines with
+    # no explanation - indistinguishable from the agent spinning.
+    if d.get("error"):
+        return f"FAILED — {str(d['error'])[:150]}"
+
     if "parents" in d:
         n = len(d["parents"])
         if d.get("search_failed"):
