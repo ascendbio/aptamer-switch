@@ -449,16 +449,23 @@ with gr.Blocks(title="Aptamer switch design") as demo:
                 box = gr.Textbox(placeholder="Biomarker, e.g. IL-6", show_label=False,
                                  scale=8, autofocus=True)
                 send = gr.Button("Design plate", variant="primary", scale=1)
-            # Optional, and the label says what happens if it is supplied: a
-            # measurement outranks every prediction upstream of it.
-            results_upload = gr.File(
-                label="Wet-lab results from a previous round (optional CSV) — "
-                      "a well column and a signal column. Supplied, these "
-                      "override the predicted design window.",
-                file_types=[".csv", ".tsv", ".txt"], type="filepath", height=90)
             gr.Examples(EXAMPLES, inputs=box, label="Try one")
             order = gr.File(label="Vendor order file (96 wells)", height=90,
                             visible=False)
+
+            # After the order file, because that is where the cycle returns: you
+            # synthesise the plate, run it, and bring the numbers back. Putting
+            # this first asked for results from a plate that did not exist yet.
+            with gr.Accordion("Have results from a previous round? Feed them back",
+                              open=False):
+                gr.Markdown(
+                    "<sub>A CSV with a well column and a signal column — any "
+                    "header wording. Uploaded, it is read **before** anything is "
+                    "designed, and the measured optimum places the next window "
+                    "instead of the predicted one.</sub>")
+                results_upload = gr.File(label=None, file_types=[".csv", ".tsv",
+                                                                ".txt"],
+                                         type="filepath", height=90)
         with gr.Column(scale=2):
             # Each figure carries its own reading guide, collapsed. The plots
             # answer questions that are not obvious from the axes — what a
