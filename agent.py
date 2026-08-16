@@ -46,7 +46,9 @@ from claude_agent_sdk import (
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent / "sources"))
 import design  # noqa: E402
+import hedged  # noqa: E402
 import ledger  # noqa: E402
+import plate  # noqa: E402
 import sensitivity  # noqa: E402
 import store  # noqa: E402
 
@@ -79,10 +81,14 @@ papers report the same sequence.
 - The single biggest risk, named plainly.
 
 After building a plate: validate it with the independent engine, test it against
-the core assumption, and read the ledger. Report all three. If the cores share no
-designs, say plainly that the plate is conditional on a guess. Name at least one
-external model that was tried and rejected, and why — a design presented without
-its failures reads as more certain than it is. A plate filtered on a dimer criterion that only one
+the core assumption, and read the ledger. Report all three. Name at least one external model that was tried and rejected, and why — a design
+presented without its failures reads as more certain than it is.
+
+If the cores share few or no designs, do not stop at "do not order". The lab has
+a budget and a synthesis slot and will make something; refusing to choose passes
+the problem back. Build the hedged plate, recommend it, and say what reading it
+will settle. Always end with a plate they can order and the one caveat that most
+affects how they read it. A plate filtered on a dimer criterion that only one
 engine supports is not ready to synthesise.
 
 Three things to be precise about, because they are where this analysis goes wrong.
@@ -309,6 +315,41 @@ async def test_core_sensitivity(args: dict) -> dict:
 
 
 @tool(
+    "build_hedged_plate",
+    "Build one orderable 96-well plate that splits its wells across the binding "
+    "core hypotheses which actually produce designs, instead of betting all of "
+    "them on one. Call this when test_core_sensitivity shows the cores share few "
+    "or no designs. The lab still gets a plate they can synthesise, and reading "
+    "it answers two questions at once: which switches work, and which core was "
+    "right. Takes about two minutes. Returns the order file path.",
+    {"sequence": str, "target": str},
+)
+async def build_hedged_plate(args: dict) -> dict:
+    seq = (args.get("sequence") or "").strip().upper()
+    if len(seq) < 16:
+        return _ok({"error": "need the parent sequence, at least 16 nt"})
+
+    result = await anyio.to_thread.run_sync(
+        lambda: hedged.run(seq, target=args.get("target") or "target"))
+    if result.get("error"):
+        return _ok({"error": result["error"]})
+
+    OUT.mkdir(exist_ok=True)
+    safe = (args.get("target") or "target").replace("/", "_")
+    csv_path = plate.write_order(result["wells"], OUT / f"{safe}_hedged_plate.csv")
+    return _ok({
+        "target": result["target"],
+        "wells": len(result["wells"]),
+        "core_hypotheses": result["hypotheses"],
+        "wells_per_hypothesis": result["wells_per_hypothesis"],
+        "control_wells": result["control_wells"],
+        "position_check": result["position_check"],
+        "how_to_read_it": result["reading"],
+        "order_file": str(csv_path),
+    })
+
+
+@tool(
     "read_ledger",
     "Return what the most recent plate rests on: which numbers were measured, "
     "which are chosen thresholds with their values, and which external models "
@@ -328,7 +369,7 @@ async def read_ledger(args: dict) -> dict:
 
 
 TOOLS = [find_parents, assess_parent, design_plate, validate_plate,
-         test_core_sensitivity, read_ledger]
+         test_core_sensitivity, build_hedged_plate, read_ledger]
 TOOL_NAMES = [f"mcp__{SERVER}__{t.name}" for t in TOOLS]
 
 LABELS = {
@@ -337,6 +378,7 @@ LABELS = {
     "design_plate": "Designing, scoring and laying out the plate",
     "validate_plate": "Re-scoring the plate with an independent engine",
     "test_core_sensitivity": "Testing the plate against the core assumption",
+    "build_hedged_plate": "Splitting the plate across core hypotheses",
     "read_ledger": "Reading what the plate rests on",
 }
 
@@ -391,6 +433,12 @@ def _summarise(payload: str) -> str:
         kind = "G-quadruplex" if d["core_is_quadruplex"] else "Watson-Crick"
         trust = "modellable" if d["opening_energy_trustworthy"] else "opening energy NOT reliable"
         return f"{kind} fold, MFE {d['mfe']} kcal/mol · {trust}"
+
+    if "core_hypotheses" in d:
+        spans = ", ".join(f"{a}-{b}" for a, b in d["core_hypotheses"])
+        return (f"{d['wells']} wells split across {len(d['core_hypotheses'])} core "
+                f"hypotheses ({spans}), {d['wells_per_hypothesis']} each · "
+                f"confounded: {d['position_check']['confounded']}")
 
     if "ledger_markdown" in d:
         text = d["ledger_markdown"]

@@ -163,16 +163,21 @@ def write_order(wells: list[Well], path: Path) -> Path:
     with path.open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["Well Position", "Name", "Sequence", "5' Mod", "3' Mod",
-                    "Scale", "Purification", "Role", "ddG (kcal/mol)", "Note"])
+                    "Scale", "Purification", "Role", "Core hypothesis",
+                    "ddG (kcal/mol)", "Note"])
         for well in wells:
+            # The hypothesis a well belongs to is what the lab sorts by when
+            # reading the plate, so it gets its own column rather than being
+            # buried in prose.
+            hyp = well.kind if str(well.kind).startswith("core ") else ""
             if not well.sequence:
                 w.writerow([well.position, well.name, "", "", "", "", "",
-                            well.role, "", well.note])
+                            well.role, hyp, "", well.note])
                 continue
             w.writerow([well.position, well.name, well.sequence,
                         "/5ThioMC6-D/", "/3MeBlN/", "100 nm", "HPLC",
-                        well.role, "" if well.dd_g is None else well.dd_g,
-                        well.note])
+                        well.role, hyp,
+                        "" if well.dd_g is None else well.dd_g, well.note])
     return path
 
 

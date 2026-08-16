@@ -51,12 +51,17 @@ def candidate_cores(length: int, n: int = N_CORES) -> list[tuple[int, int]]:
 
 
 def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None,
-        kd_source: str = "") -> dict:
-    """Design under each plausible core; report what survives all of them."""
+        kd_source: str = "", keep_results: bool = False) -> dict:
+    """Design under each plausible core; report what survives all of them.
+
+    `keep_results` returns each core's full design result under "results". The
+    hedged plate needs the scores behind every selection, and re-running the
+    productive cores to recover them doubled a three-minute sweep.
+    """
     parent = parent.upper().replace("U", "T")
     cores = candidate_cores(len(parent))
 
-    per_core, selected_sets = [], []
+    per_core, selected_sets, results = [], [], {}
     for core in cores:
         try:
             r = design.run(parent, core, kd_intrinsic_M, target=target,
@@ -68,6 +73,8 @@ def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None
 
         picked = {w.sequence for w in r["wells"] if w.role == "test"}
         selected_sets.append(picked)
+        if keep_results:
+            results[tuple(core)] = r
         per_core.append({
             "core": list(core),
             "architecture": r["architecture"],
@@ -100,6 +107,7 @@ def run(parent: str, target: str = "target", kd_intrinsic_M: float | None = None
         "robust_fraction": (round(len(robust) / max(len(s) for s in productive), 3)
                             if len(productive) >= 2 else None),
         "verdict": _verdict(len(productive), len(cores), len(robust)),
+        **({"results": results} if keep_results else {}),
     }
 
 
