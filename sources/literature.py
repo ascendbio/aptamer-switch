@@ -47,6 +47,9 @@ TIMEOUT = 600
 # a bounded probe rather than a stalled pipeline: at 60s per paper internally, a
 # blind retry over fifty documents is fifty minutes of waiting to learn the same
 # thing a single probe learns in twenty seconds.
+GREP_ATTEMPTS = 2               # one retry; the corpus fails intermittently
+GREP_BACKOFF_S = 3
+
 MAP_PROBE_TIMEOUT = 25          # seconds; shorter than the reader's own 60s stall
 MAP_HEALTH_TTL = 300            # re-probe at most once every 5 minutes
 _map_health: dict[str, float | bool] = {"ok": False, "checked_at": 0.0}
@@ -377,12 +380,23 @@ def find_parents(target: str, max_papers: int = 60) -> dict:
     query = (f'"(?:{alt}).{{0,60}}aptamer|aptamer.{{0,60}}(?:{alt})" '
              f'AND "5.{{0,3}}-(?:[ACGTUacgtu][ ]?){{15,}}"')
 
-    grep_out, grep_err, grep_rc = _run(["grep", "--bool", query, "/papers/"])
-    printed = _failed(grep_out)
+    # The corpus search fails intermittently under load, and a failure that
+    # clears on retry should not end the run: the alternative is telling the
+    # user nothing was found when the query never executed.
+    for attempt in range(GREP_ATTEMPTS):
+        grep_out, grep_err, grep_rc = _run(["grep", "--bool", query, "/papers/"])
+        printed = _failed(grep_out)
+        if grep_rc == 0 and not printed:
+            break
+        if attempt + 1 < GREP_ATTEMPTS:
+            time.sleep(GREP_BACKOFF_S)
+
     if grep_rc != 0 or printed:
         return {"target": target, "searched_as": variants, "n_papers": 0,
                 "parents": [], "search_failed": True,
-                "note": f"literature search failed: "
+                "search_stage": "corpus query",
+                "attempts": GREP_ATTEMPTS,
+                "note": f"literature search failed after {GREP_ATTEMPTS} attempts: "
                         f"{printed or grep_err.strip()[:200]}. This is NOT "
                         f"evidence that no aptamer exists — the query itself did "
                         f"not run."}

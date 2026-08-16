@@ -420,7 +420,15 @@ def _summarise(payload: str) -> str:
     if "parents" in d:
         n = len(d["parents"])
         if d.get("search_failed"):
-            return (f"SEARCH FAILED — {d.get('papers_failed', 0)} papers unread; "
+            # Name the stage. "0 papers unread" was printed when the corpus query
+            # itself never ran, which reads as though the papers were checked and
+            # found wanting.
+            if d.get("search_stage") == "corpus query":
+                return ("SEARCH FAILED — the corpus query did not run "
+                        f"(retried {d.get('attempts', 1)}x). Nothing was checked; "
+                        "this says nothing about whether an aptamer exists")
+            return (f"SEARCH FAILED — {d.get('papers_failed', 0)} of "
+                    f"{d.get('n_papers', 0)} matched papers could not be read; "
                     f"this is not a negative result")
         if not n:
             failed = d.get("papers_failed", 0)
