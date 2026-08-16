@@ -26,6 +26,7 @@ import gradio as gr
 from agent import analyse
 
 sys.path.insert(0, str(Path(__file__).parent / "sources"))
+import feedback  # noqa: E402
 import ledger  # noqa: E402
 import store  # noqa: E402
 import workspace  # noqa: E402
@@ -359,7 +360,22 @@ async def respond(target: str, history: list, session: str,
             results_path = OUT_DIR / "uploaded_results.csv"
             results_path.write_bytes(src.read_bytes())
 
+    # Round two does not need the biomarker typed again: the results file names
+    # the plate it came from, and that plate names the target. Requiring it
+    # anyway meant uploading a file, pressing Redesign plate, and watching
+    # nothing happen at all - the guard below returned before the first yield,
+    # so there was not even an error to read.
+    if not target and results_path:
+        target = _target_from_plate(OUT_DIR)
+
     if not target:
+        history = history + [{
+            "role": "assistant",
+            "content": ("Type a biomarker above — or upload results from a "
+                        "plate this session designed, and the target is taken "
+                        "from the plate." if results_path else
+                        "Type a biomarker above, e.g. **IL-6**, then press "
+                        "**Design plate**.")}]
         yield history, "", *_panels(BLANK)
         return
 
@@ -459,6 +475,18 @@ async def respond(target: str, history: list, session: str,
     # and the reasoning is the part that explains why the numbers were accepted.
     await asyncio.to_thread(_archive, target, memo, trace)
     yield history, "", *_panels(await asyncio.to_thread(_figures, target, run_began))
+
+
+def _target_from_plate(out_dir: Path) -> str:
+    """The biomarker a session's newest plate was designed for.
+
+    Read off the filename the design run wrote, which is the same name the agent
+    used, so round two lands in the same place round one did.
+    """
+    plate = feedback.newest_plate(out_dir)
+    if plate is None:
+        return ""
+    return plate.stem.replace("_hedged_plate", "").replace("_plate", "").strip()
 
 
 def _archive(target: str, memo: str, trace: list[str]) -> None:
