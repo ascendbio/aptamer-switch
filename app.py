@@ -186,16 +186,16 @@ def _figures(target: str, since: float = 0.0) -> tuple:
 
     return (newest("*_switch.png"), newest("*_funnel.png"), newest("*_dose.png"),
             newest("*_window.png"), newest("*_plate.png"), newest("*_plate.csv"),
-            _gallery(since), _comparison(since))
+            _gallery(since), _comparison(since), newest("SIMULATED_results_*.csv"))
 
 
-BLANK = (None, None, None, None, None, None, [], None)
+BLANK = (None, None, None, None, None, None, [], None, None)
 
 # The single source of truth for what _panels returns and what the Blocks wires,
 # so the two cannot drift apart silently.
 OUTPUT_ORDER = [
     "switch_img", "funnel_img", "dose_img", "window_img", "plate_img", "order",
-    "gallery", "compare", "ledger_md",
+    "gallery", "compare", "ledger_md", "simulated",
     "switch_box", "funnel_box", "dose_box", "dose_absent", "window_box", "plate_box",
     "compare_box", "gallery_box", "ledger_box",
 ]
@@ -211,7 +211,8 @@ def _panels(figs: tuple):
     say which component got the wrong type. The assertion below is cheap
     insurance against the same mistake.
     """
-    switch, funnel, dose, window, plate, csv, gallery_items, table = figs
+    (switch, funnel, dose, window, plate, csv, gallery_items, table,
+     sim) = figs
     latest = store.latest_run(workspace.current())
     text = ledger.build(latest / "manifest.json") if latest and table else ""
 
@@ -219,6 +220,7 @@ def _panels(figs: tuple):
         switch, funnel, dose, window, plate,               # the five images
         gr.update(value=csv, visible=bool(csv)),           # order file
         gallery_items, table, text,                        # gallery, table, ledger
+        gr.update(value=sim, visible=bool(sim)),           # simulated results
         gr.update(visible=bool(switch)),                   # switch_box
         gr.update(visible=bool(funnel)),                   # funnel_box
         gr.update(visible=bool(dose)),                     # dose_box
@@ -471,6 +473,13 @@ with gr.Blocks(title="Aptamer switch design") as demo:
                     "header wording. Uploaded, it is read **before** anything is "
                     "designed, and the measured optimum places the next window "
                     "instead of the predicted one.</sub>")
+                # Written alongside every plate, so it always matches the wells
+                # on screen. Offered here because the join is on well position:
+                # any other file would load and report a meaningless correlation.
+                simulated = gr.File(
+                    label="No bench data yet? Simulated results for this exact "
+                          "plate — every row marked SYNTHETIC, for demonstration "
+                          "only", height=90, visible=False)
                 results_upload = gr.File(label=None, file_types=[".csv", ".tsv",
                                                                 ".txt"],
                                          type="filepath", height=90)
@@ -550,7 +559,7 @@ with gr.Blocks(title="Aptamer switch design") as demo:
 
     # One list, in the same order _panels returns its values.
     outputs = [switch_img, funnel_img, dose_img, window_img, plate_img, order,
-               gallery, compare, ledger_md,
+               gallery, compare, ledger_md, simulated,
                switch_box, funnel_box, dose_box, dose_absent, window_box, plate_box,
                compare_box, gallery_box, ledger_box]
     assert len(outputs) == len(OUTPUT_ORDER), "outputs drifted from OUTPUT_ORDER"

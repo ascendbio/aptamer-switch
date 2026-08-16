@@ -291,6 +291,30 @@ def _position_check(tests: list[plate.Well]) -> tuple[float, float]:
     return round(observed, 3), round(null[int(0.95 * len(null))], 3)
 
 
+def _simulated_for(plate_csv: Path) -> Path:
+    """Write simulated wet-lab results matching this exact plate.
+
+    Generated the moment a plate is, because the join is on well position: a
+    results file from any other plate loads without complaint and reports a
+    correlation that means nothing. Keeping the pair in step removes the only way
+    the feedback loop can be demonstrated wrongly.
+
+    Named and labelled so it cannot be mistaken for a measurement — the filename
+    says SIMULATED and every row says so again in its own column.
+    """
+    import feedback
+    hypothesis = None
+    with plate_csv.open() as fh:
+        for row in __import__("csv").DictReader(fh):
+            if row.get("Core hypothesis"):
+                hypothesis = row["Core hypothesis"]
+                break
+    target = plate_csv.stem.replace("_hedged_plate", "").replace("_plate", "")
+    return feedback.example_results(
+        plate_csv, plate_csv.parent / f"SIMULATED_results_{target}.csv",
+        winning_hypothesis=hypothesis)
+
+
 def artifacts(result: dict, out_dir: Path) -> dict:
     """Render the four figures and the order file, and archive the run.
 
@@ -347,7 +371,9 @@ def artifacts(result: dict, out_dir: Path) -> dict:
         out["plate"] = plots.plate_map(
             result["wells"], str(out_dir / f"{t}_plate.png"),
             null_p95=pc["null_p95"], observed=pc["observed"])
-        out["csv"] = str(plate.write_order(result["wells"], out_dir / f"{t}_plate.csv"))
+        csv_path = plate.write_order(result["wells"], out_dir / f"{t}_plate.csv")
+        out["csv"] = str(csv_path)
+        out["simulated_results"] = str(_simulated_for(csv_path))
     # Copy the run's outputs alongside its manifest so the directory is
     # self-contained: a plate is a lab record and should not depend on files
     # that the next run will overwrite.
