@@ -101,12 +101,13 @@ Required sequence once a plate exists. Do all four before writing anything:
 If the user supplies wet-lab results, the run is a second round and the sequence
 is already settled. Do this instead of the normal sequence:
 
-  1. learn_from_results   — FIRST, before anything else
+  1. learn_from_results   — FIRST, before anything else. Pass only the results
+                            file; the tool finds the plate those wells belong to.
+                            Do not guess a plate filename.
   2. design_plate         — using the parent_sequence it returns
 
-Do NOT call find_parents. The parent is whatever the measured plate was built
-from, the tool hands it back, and searching the literature again costs two
-minutes to re-derive a sequence already in hand.
+There is no find_parents in a second round, and none is needed: the parent is
+whatever the measured plate was built from, and that tool hands it back.
 
 Place the window using measured_optimum_ddg rather than the default, and if the
 results eliminated a core hypothesis, design on the surviving one. Where the
@@ -251,8 +252,13 @@ async def design_plate(args: dict) -> dict:
                              "reporting that Kd for this exact sequence and target, "
                              "or omit kd_nM and affinity-derived output will be "
                              "omitted rather than estimated."})
-    result = design.run(seq, (start, end), kd_M, target=args["target"],
-                        kd_source=kd_source)
+    try:
+        result = design.run(seq, (start, end), kd_M, target=args["target"],
+                            kd_source=kd_source)
+    except ValueError as exc:
+        # Reaches the agent as something it can act on - drop the bad field and
+        # call again - rather than as a traceback that ends the run.
+        return _ok({"error": str(exc)})
     art = design.artifacts(result, workspace.current())
 
     if not result["selected"]:
@@ -413,8 +419,9 @@ async def build_hedged_plate(args: dict) -> dict:
     "null, not asserted), which core hypothesis responded, where the measured "
     "optimum sits, and what the next round should be built around. This is the "
     "only tool that sees a measured number rather than a predicted one, so its "
-    "answer outranks anything upstream of it.",
-    {"results_csv": str, "plate_csv": str},
+    "answer outranks anything upstream of it. Pass only the results file: the "
+    "tool locates the plate those wells belong to by itself.",
+    {"results_csv": str},
 )
 async def learn_from_results(args: dict) -> dict:
     out_dir = workspace.current()
@@ -422,13 +429,21 @@ async def learn_from_results(args: dict) -> dict:
     if not results.exists():
         return _ok({"error": f"no results file at {results}"})
 
+    # The plate is found, never named. A required plate_csv parameter sent the
+    # agent guessing filenames one at a time - plate.csv, order.csv,
+    # hedged_plate.csv, vendor_order.csv - because it has no filesystem tools and
+    # the schema obliged it to supply a path. Eight failed calls before it gave
+    # up. It cannot know the name, and it does not need to: the wells identify
+    # their own plate.
+    #
+    # An explicit path is still honoured for programmatic callers, and ignored
+    # rather than trusted when it points at nothing.
     plate_path = (args.get("plate_csv") or "").strip()
-    if plate_path:
-        designed = Path(plate_path)
-    else:
-        # Default to the hedged plate when one exists: it is the plate built to
-        # be read this way, and reading the single-core plate instead would
-        # discard the hypothesis comparison the wells were spent on.
+    designed = Path(plate_path) if plate_path else None
+    if designed is None or not designed.exists():
+        # Prefer the hedged plate: it is the one built to be read this way, and
+        # reading the single-core plate instead discards the hypothesis
+        # comparison its wells were spent on.
         candidates = sorted(out_dir.glob("*_hedged_plate.csv")) or \
             sorted(out_dir.glob("*_plate.csv"))
         if not candidates:
@@ -636,13 +651,26 @@ def _summarise(payload: str) -> str:
     return ""
 
 
-def _options() -> ClaudeAgentOptions:
+def _options(second_round: bool = False) -> ClaudeAgentOptions:
+    """Agent configuration; a second round is given no way to search.
+
+    The system prompt already says not to call find_parents when results are
+    supplied — and the agent searched anyway, because a plain instruction has to
+    win against a tool that is sitting right there and looks obviously relevant
+    to a request naming a biomarker. Two minutes of literature search to
+    re-derive a sequence the results file already carries.
+
+    So the tool is withheld rather than discouraged. On a second round the agent
+    is not asked to resist find_parents; it is not offered it.
+    """
+    tools = [t for t in TOOLS if not (second_round and t.name == "find_parents")]
+    names = [f"mcp__{SERVER}__{t.name}" for t in tools]
     return ClaudeAgentOptions(
         model=MODEL,
         system_prompt=SYSTEM,
-        mcp_servers={SERVER: create_sdk_mcp_server(SERVER, tools=TOOLS)},
+        mcp_servers={SERVER: create_sdk_mcp_server(SERVER, tools=tools)},
         tools=[],                       # switch off Claude Code's built-ins
-        allowed_tools=TOOL_NAMES,
+        allowed_tools=names,
         permission_mode="bypassPermissions",
         effort="high",
         # Seven tools, and the last two matter most: a run that exhausts its
@@ -660,16 +688,22 @@ async def analyse(target: str,
     if results_csv:
         # Measurements outrank prediction, so they are stated first and the
         # instruction to read them is explicit rather than left to inference.
-        prompt = (f"Wet-lab results from a previous round are at {results_csv}. "
-                  f"Call learn_from_results on that file FIRST and let what it "
-                  f"reports govern everything after it — where a measurement "
-                  f"disagrees with a prediction, the measurement wins.\n\n"
+        prompt = (f"This is round two. Wet-lab results from the previous round "
+                  f"are at {results_csv}. Call learn_from_results on that file "
+                  f"FIRST and let what it reports govern everything after it — "
+                  f"where a measurement disagrees with a prediction, the "
+                  f"measurement wins.\n\n"
                   + prompt
-                  + " Use the measured optimum to place the design window rather "
-                    "than the default, and say plainly what the data changed.")
+                  + " The parent is already settled: learn_from_results returns "
+                    "the sequence the measured plate was built from, and there is "
+                    "no literature-search tool in this round because none is "
+                    "needed. Design straight from that sequence, use the measured "
+                    "optimum to place the window rather than the default, and say "
+                    "plainly what the data changed.")
     started: dict[str, float] = {}
 
-    async for message in query(prompt=prompt, options=_options()):
+    async for message in query(prompt=prompt,
+                               options=_options(second_round=bool(results_csv))):
         if isinstance(message, AssistantMessage):
             for block in message.content:
                 if isinstance(block, ToolUseBlock):

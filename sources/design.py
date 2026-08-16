@@ -11,6 +11,7 @@ never disagree with the CSV: they are drawn from one object.
 
 from __future__ import annotations
 
+import math
 import random
 import statistics
 import sys
@@ -160,10 +161,33 @@ def run(parent: str, core: tuple[int, int], kd_intrinsic_M: float | None,
     # clinical conversion is skipped rather than defaulted.
     clinical_M = (thermo.pg_per_ml_to_molar(clinical_pg_per_ml, mw_da)
                   if mw_da else 0.0)
-    if kd_intrinsic_M and not kd_source:
-        raise ValueError("kd_intrinsic_M requires kd_source naming its origin; "
-                         "an unattributed affinity is how a receptor aptamer's "
-                         "Kd ends up labelling a design against the ligand")
+    if kd_intrinsic_M is not None:
+        # Where the number came from was checked; whether it is a number of the
+        # right kind was not. A second-round agent holding measured_optimum_ddg
+        # put that energy into the affinity slot, and -0.3 propagated all the way
+        # to a reported apparent Kd of -30 to -3 nM. A dissociation constant
+        # cannot be negative, and nothing downstream noticed: kd_penalty is
+        # always positive, so the sign came straight through the multiplication.
+        if not math.isfinite(kd_intrinsic_M) or kd_intrinsic_M <= 0:
+            raise ValueError(
+                f"kd_intrinsic_M must be a positive concentration; got "
+                f"{kd_intrinsic_M}. A dissociation constant cannot be zero or "
+                f"negative — a negative value here is usually a free energy in "
+                f"kcal/mol that has been put in the affinity field.")
+        # Aptamer affinities run from roughly picomolar to micromolar. Well
+        # outside that the value is almost certainly in the wrong units rather
+        # than a remarkable measurement, and it is better to say so than to
+        # publish a clinical-reach figure computed from it.
+        if not (1e-15 <= kd_intrinsic_M <= 1e-3):
+            raise ValueError(
+                f"kd_intrinsic_M = {kd_intrinsic_M} M is outside the range "
+                f"aptamer affinities occupy (1 fM to 1 mM). Check the units: "
+                f"this field is molar, and a value in nM is 1e-9 times smaller.")
+        if not kd_source:
+            raise ValueError(
+                "kd_intrinsic_M requires kd_source naming its origin; an "
+                "unattributed affinity is how a receptor aptamer's Kd ends up "
+                "labelling a design against the ligand")
 
     # Pick the architecture the parent can actually support. A Watson-Crick
     # parent is destabilised in itself; only a quadruplex, whose opening energy
