@@ -97,6 +97,14 @@ def save_design(run_dir: Path, result: dict) -> dict:
         "universal_blockers": result.get("universal_blockers", []),
         "diagnosis": result.get("diagnosis", ""),
         "position_check": result["position_check"],
+        "parent_length": len(result["parent"]),
+        # The best switching balance actually reaching the plate. A parent whose
+        # closest design sits far from zero was never going to switch, and that
+        # is invisible from the pass count alone.
+        "best_abs_ddg_selected": (
+            round(min(abs(r["dd_g"]) for r in result["rows"]
+                      if r["name"] in result.get("picked_names", set())), 3)
+            if result.get("selected") else None),
         "architecture": result.get("architecture"),
         "thresholds": _thresholds(),
         "code_commit": _git_commit(),

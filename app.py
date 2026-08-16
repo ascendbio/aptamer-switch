@@ -14,6 +14,7 @@ needed and nothing is billed to the API.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import time
 from pathlib import Path
@@ -134,10 +135,60 @@ def _figures(target: str, since: float = 0.0) -> tuple:
         return str(max(hits, key=lambda p: p.stat().st_mtime)) if hits else None
 
     return (newest("*_funnel.png"), newest("*_dose.png"), newest("*_window.png"),
-            newest("*_plate.png"), newest("*_plate.csv"), _gallery(since))
+            newest("*_plate.png"), newest("*_plate.csv"), _gallery(since),
+            _comparison(since))
 
 
-BLANK = (None, None, None, None, None, [])
+BLANK = (None, None, None, None, None, [], None)
+
+COMPARE_COLUMNS = ["parent", "architecture", "library", "in window", "passing",
+                   "wells", "blocked by", "best |ddG|"]
+
+
+def _comparison(since: float) -> list[list]:
+    """One row per parent assessed, from the manifests each run already writes.
+
+    Sixteen figures across four candidates is not something a customer can hold
+    in their head. The decision they are actually making is which parent to back,
+    and that comes down to a handful of numbers per candidate, side by side.
+    Read from the archived manifests rather than recomputed, so the table cannot
+    drift from the plate it describes.
+    """
+    runs = OUT / "runs"
+    if not runs.exists():
+        return []
+
+    rows = []
+    for d in sorted(runs.iterdir()):
+        manifest = d / "manifest.json"
+        if not manifest.exists() or manifest.stat().st_mtime < since:
+            continue
+        try:
+            m = json.loads(manifest.read_text())
+        except json.JSONDecodeError:
+            continue
+
+        wells = m.get("selected") or 0
+        if wells:
+            blocked = "-"
+        else:
+            blockers = m.get("universal_blockers") or []
+            reasons = m.get("failure_reasons") or {}
+            blocked = ", ".join(blockers) or (
+                max(reasons, key=reasons.get) if reasons else "nothing passed")
+
+        rows.append([
+            f"{m.get('target', '?')} ({m.get('parent_length', '?')} nt)",
+            m.get("architecture", "-"),
+            f"{m.get('library_size', 0):,}",
+            f"{m.get('in_switching_window', 0):,}",
+            f"{m.get('passing_all_criteria', 0):,}",
+            wells or "none",
+            blocked,
+            m.get("best_abs_ddg_selected") if wells else "-",
+        ])
+    return rows
+
 
 KIND_LABEL = {"funnel": "library → plate", "dose": "what the sensor can see",
               "window": "switching vs specificity", "plate": "the 96-well plate"}
@@ -310,6 +361,16 @@ with gr.Blocks(title="Aptamer switch design") as demo:
     # rejected parent's funnel is often the more informative figure: it shows
     # which criterion removed the whole library and therefore why that candidate
     # could not work, which is what makes the recommendation checkable.
+    gr.Markdown("#### Parents assessed this run")
+    gr.Markdown(
+        "<sub>One row per published parent the agent evaluated. **wells = none** "
+        "means that candidate produced no usable plate, and **blocked by** names "
+        "the criterion that eliminated its entire library — a property of the "
+        "parent sequence, which no design choice can work around. **best |ddG|** "
+        "is how close the best selected design sits to switching balance; far "
+        "from zero means it was never going to switch.</sub>")
+    compare = gr.Dataframe(headers=COMPARE_COLUMNS, wrap=True, interactive=False)
+
     with gr.Accordion("Every parent evaluated in this run — click any figure to "
                       "enlarge", open=False):
         gr.Markdown(
@@ -325,7 +386,7 @@ with gr.Blocks(title="Aptamer switch design") as demo:
     for trigger in (box.submit, send.click):
         trigger(respond, [box, chat],
                 [chat, box, funnel_img, dose_img, window_img, plate_img, order,
-                 gallery])
+                 gallery, compare])
 
 
 if __name__ == "__main__":
