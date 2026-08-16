@@ -52,16 +52,6 @@ You get 96 wells tiling the usable design window, with controls, randomised
 positions, and a vendor order file — a plate built to locate the optimum in one
 wet-lab round."""
 
-NO_DOSE = """**What the sensor can actually see** — not shown.
-
-No paper reports a binding affinity for this parent, and the whole content of a
-dose-response curve is *where it sits* on the concentration axis, which comes
-from Kd. Drawn from a placeholder it would be a picture of an assumption, so it
-is left out rather than filled in.
-
-Everything else on the plate is unaffected: ddG, specificity and dimer margins
-are computed from sequence and never touch affinity."""
-
 # One question per panel, naming what its guide actually answers. Five identical
 # "What am I looking at?" headers gave a reader no way to tell which one held the
 # thing they were wondering about.
@@ -118,11 +108,6 @@ occupancy floor, which is an **assumed** working limit, not a measured one.
 The dashed curve is the parent aptamer; the solid curve is the switch built from
 it. The gap between them is the price of switching — the target has to pay the
 core-opening energy itself, so a switch always binds more weakly than its parent.
-
-**This panel is blank when no paper reports an affinity for the parent**, which
-is the common case. The curve's whole content is where it sits on the
-concentration axis, and that position comes from Kd. Drawn from a placeholder it
-would be a picture of an assumption.
 """,
     "window": """
 **The two axes the plate is actually selected on.**
@@ -228,7 +213,7 @@ BLANK = (None, None, None, None, None, None, [], None)
 OUTPUT_ORDER = [
     "switch_img", "funnel_img", "dose_img", "window_img", "plate_img", "order",
     "gallery", "compare", "ledger_md", "feedback_box",
-    "switch_box", "funnel_box", "dose_box", "dose_absent", "window_box", "plate_box",
+    "switch_box", "funnel_box", "dose_box", "window_box", "plate_box",
     "compare_box", "gallery_box", "ledger_box",
 ]
 
@@ -258,7 +243,6 @@ def _panels(figs: tuple):
         gr.update(visible=bool(switch)),                   # switch_box
         gr.update(visible=bool(funnel)),                   # funnel_box
         gr.update(visible=bool(dose)),                     # dose_box
-        gr.update(visible=not dose and bool(plate)),       # dose_absent
         gr.update(visible=bool(window)),                   # window_box
         gr.update(visible=bool(plate)),                    # plate_box
         gr.update(visible=bool(table)),                    # compare_box
@@ -622,7 +606,6 @@ with gr.Blocks(title="Aptamer switch design") as demo:
                                     height=250)
                 with gr.Accordion(ASK["dose"], open=False):
                     gr.Markdown(EXPLAIN["dose"])
-            dose_absent = gr.Markdown(NO_DOSE, visible=False)
 
             with gr.Column(visible=False) as window_box:
                 window_img = gr.Image(label="Switching vs specificity", height=260)
@@ -674,7 +657,7 @@ with gr.Blocks(title="Aptamer switch design") as demo:
     # One list, in the same order _panels returns its values.
     outputs = [switch_img, funnel_img, dose_img, window_img, plate_img, order,
                gallery, compare, ledger_md, feedback_box,
-               switch_box, funnel_box, dose_box, dose_absent, window_box, plate_box,
+               switch_box, funnel_box, dose_box, window_box, plate_box,
                compare_box, gallery_box, ledger_box]
     assert len(outputs) == len(OUTPUT_ORDER), "outputs drifted from OUTPUT_ORDER"
 
