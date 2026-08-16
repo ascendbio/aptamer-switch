@@ -560,8 +560,6 @@ def _summarise(payload: str) -> str:
             line += f" · printed as \"...{best['printed_as'][0][-46:]}\""
         if best.get("kd_nM"):
             line += f", Kd {best['kd_as_written']} ({best['kd_source']})"
-        if d.get("from_cache"):
-            line += " · from cache, not re-searched"
         with_kd = sum(1 for p in d["parents"] if p.get("kd_nM"))
         if with_kd:
             line += f" · {with_kd}/{n} with an attributed affinity"
