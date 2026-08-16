@@ -120,6 +120,17 @@ def _max_run(seq: str, base: str | None = None) -> int:
 
 
 def _self_dimer(seq: str) -> float:
+    """Free energy of this construct against a copy of itself.
+
+    Loads the DNA parameters first rather than assuming someone else has.
+    ViennaRNA keeps them in global state, so duplexfold silently returns RNA
+    energies until something calls the loader: the same 45-mer scores -38.1
+    before and -15.0 after, a 23 kcal/mol swing decided by import order. The
+    pipeline happened to be safe because thermo.fold() runs first inside
+    assess(), which is not a property worth relying on.
+    """
+    thermo._dna_model()
+    RNA.cvar.temperature = thermo.BODY_TEMP_C
     return round(RNA.duplexfold(seq, seq).energy, 2)
 
 
