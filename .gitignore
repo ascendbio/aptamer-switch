@@ -2,3 +2,8 @@ out/
 __pycache__/
 *.pyc
 venv/
+
+# Slide decks: large binaries, and PowerPoint leaves ~$ lock files behind.
+# The deck is regenerated from the run artifacts by slides.py.
+*.pptx
+~$*
